@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<meta name="description" content="상우님의 운동·식단 기록 앱">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="핏로그">
+<title>핏로그 · 운동·식단 기록</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <h1 id="title">오늘</h1>
+  <button id="backBtn" class="icon-btn hidden" aria-label="뒤로">‹</button>
+</header>
+<main id="app"></main>
+<nav class="tabbar">
+  <button data-tab="log" class="tab active"><span class="ti">🏋️</span><span>오늘</span></button>
+  <button data-tab="diet" class="tab"><span class="ti">🍚</span><span>식단</span></button>
+  <button data-tab="history" class="tab"><span class="ti">📈</span><span>히스토리</span></button>
+  <button data-tab="guide" class="tab"><span class="ti">📖</span><span>운동법</span></button>
+  <button data-tab="settings" class="tab"><span class="ti">⚙️</span><span>설정</span></button>
+</nav>
+<div id="sheet" class="sheet hidden" role="dialog" aria-modal="true">
+  <div class="sheet-backdrop"></div>
+  <div class="sheet-panel"><div id="sheetBody"></div></div>
+</div>
+<div id="toast" class="toast hidden"></div>
+<script src="exercises.js"></script>
+<script src="foods.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
