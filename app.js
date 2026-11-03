@@ -23,7 +23,7 @@ const MEALS = ['아침', '점심', '저녁', '간식'];
 const isObj = o => o && typeof o === 'object' && !Array.isArray(o);
 const isDate = k => /^\d{4}-\d{2}-\d{2}$/.test(k);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-function emptyDb() { return { version: 2, workouts: {}, custom: [], meals: {}, weights: {}, profile: {}, customFoods: [], favFoods: [], meta: {} }; }
+function emptyDb() { return { version: 2, workouts: {}, custom: [], meals: {}, weights: {}, profile: {}, customFoods: [], favFoods: [], lastAmt: {}, meta: {} }; }
 function validDb(d) {
   if (!isObj(d)) return false;
   if (d.workouts === undefined && d.meals === undefined && d.weights === undefined) return false;
@@ -48,7 +48,8 @@ function validDb(d) {
 const nz = v => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : 0; };
 function normEntry(it) {
   return { id: String(it.id || uid()), meal: MEALS.includes(it.meal) ? it.meal : '간식', name: String(it.name).slice(0, 60), serving: String(it.serving || '1회').slice(0, 40),
-    qty: nz(it.qty) || 1, kcal: nz(it.kcal), protein: nz(it.protein), carbs: nz(it.carbs), fat: nz(it.fat), foodId: it.foodId ? String(it.foodId) : undefined };
+    qty: nz(it.qty) || 1, kcal: nz(it.kcal), protein: nz(it.protein), carbs: nz(it.carbs), fat: nz(it.fat), foodId: it.foodId ? String(it.foodId) : undefined,
+    g: nz(it.g) || undefined, amt: isObj(it.amt) ? { ...(it.amt.p != null ? { p: nz(it.amt.p), n: nz(it.amt.n) || 1 } : {}) } : undefined };
 }
 function normalize(d) {
   const out = emptyDb();
@@ -61,7 +62,13 @@ function normalize(d) {
   for (const [k, v] of Object.entries(d.meals || {})) { const items = v.map(normEntry); if (items.length) out.meals[k] = items; }
   for (const [k, v] of Object.entries(d.weights || {})) { const n = Number(v); if (isDate(k) && n >= 20 && n <= 400) out.weights[k] = n; }
   if (isObj(d.profile)) out.profile = d.profile;
-  out.customFoods = (Array.isArray(d.customFoods) ? d.customFoods : []).filter(f => f && f.id && f.name).map(f => ({ id: String(f.id), name: String(f.name), serving: String(f.serving || '1회'), kcal: nz(f.kcal), protein: nz(f.protein), carbs: nz(f.carbs), fat: nz(f.fat), cat: '내 음식', custom: true }));
+  // 직접입력 음식: 새 방식(100g당 k/p/c/f + 분량) 또는 예전 방식(1회 제공량당 kcal/protein…)을 모두 그대로 보존
+  out.customFoods = (Array.isArray(d.customFoods) ? d.customFoods : []).filter(f => f && f.id && f.name).map(f => f.k != null
+    ? { id: String(f.id), name: String(f.name), cat: '내 음식', custom: true, k: nz(f.k), p: nz(f.p), c: nz(f.c), f: nz(f.f), unit: 'g', src: '직접 입력', srcName: String(f.srcName || ''), state: '',
+        por: (Array.isArray(f.por) ? f.por : []).filter(p => Array.isArray(p) && p[1] > 0).map(p => [String(p[0]).slice(0, 30), nz(p[1])]) }
+    : { id: String(f.id), name: String(f.name), serving: String(f.serving || '1회'), kcal: nz(f.kcal), protein: nz(f.protein), carbs: nz(f.carbs), fat: nz(f.fat), cat: '내 음식', custom: true });
+  out.lastAmt = {};
+  for (const [k, v] of Object.entries(isObj(d.lastAmt) ? d.lastAmt : {})) if (isObj(v) && nz(v.g) > 0) out.lastAmt[k] = v.p != null ? { p: nz(v.p), n: nz(v.n) || 1, g: nz(v.g) } : { g: nz(v.g) };
   out.favFoods = (Array.isArray(d.favFoods) ? d.favFoods : []).filter(x => typeof x === 'string');
   return out;
 }
@@ -213,15 +220,16 @@ $('#backBtn').addEventListener('click', () => { if (history.length > 1) history.
 function route() {
   const parts = (location.hash || '#/log').slice(2).split('/');
   const tab = parts[0] || 'log';
-  const tabFor = tab === 'ex' ? (parts[2] === 'guide' ? 'guide' : 'history') : tab === 'weight' ? 'diet' : tab;
+  const tabFor = tab === 'ex' ? (parts[2] === 'guide' ? 'guide' : 'history') : tab === 'weight' ? 'diet' : tab === 'evidence' ? 'settings' : tab;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tabFor));
-  $('#backBtn').classList.toggle('hidden', tab !== 'ex' && tab !== 'weight');
+  $('#backBtn').classList.toggle('hidden', tab !== 'ex' && tab !== 'weight' && tab !== 'evidence');
   window.scrollTo(0, 0);
   if (tab === 'history') return renderHistory();
   if (tab === 'diet') return renderDiet();
   if (tab === 'weight') return renderWeightPage();
   if (tab === 'guide') return renderGuide();
   if (tab === 'settings') return renderSettings();
+  if (tab === 'evidence') return renderEvidence();
   if (tab === 'ex') return renderExercise(decodeURIComponent(parts[1] || ''), parts[2] || 'records');
   return renderLog();
 }
@@ -595,8 +603,10 @@ function renderSettings() {
       <button class="btn block" id="pasteImp" style="margin-top:8px">📋 코치 데이터 붙여넣기</button></div>
     <div class="card"><h3 style="margin:0 0 6px">📱 홈 화면에 추가</h3>
       <p class="small" style="margin:0">아이폰: 사파리 하단 <b>공유</b> → <b>홈 화면에 추가</b><br>안드로이드: 크롬 메뉴(⋮) → <b>홈 화면에 추가</b> 또는 <b>앱 설치</b><br><span class="muted">한 번 열고 나면 인터넷 없이도 동작해요.</span></p></div>
+    <button class="btn block" id="evBtn" style="margin-bottom:12px">📚 계산·음식 데이터 근거 (논문·출처)</button>
     <button class="btn danger block" id="wipe">전체 기록 삭제</button>
-    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v2 · 상우님 전용 💪</p>`;
+    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v3 · 상우님 전용 💪</p>`;
+  $('#evBtn').onclick = () => go('#/evidence');
   const fname = () => `fitlog-backup-${todayStr()}.json`;
   const markBackup = () => { db.meta.lastBackup = todayStr(); save(); };
   $('#exp').onclick = () => {
@@ -637,6 +647,7 @@ function renderSettings() {
         if (!Object.keys(db.profile).length) db.profile = inc.profile;
         for (const f of inc.customFoods) if (!db.customFoods.some(x => x.id === f.id)) db.customFoods.push(f);
         db.favFoods = [...new Set([...db.favFoods, ...inc.favFoods])];
+        db.lastAmt = { ...inc.lastAmt, ...db.lastAmt };
       }
       save(); toast(`불러왔어요! (운동 ${Object.keys(inc.workouts).length}일 · 식단 ${Object.keys(inc.meals).length}일)`); renderSettings();
     } catch (err) { toast('백업 파일을 읽을 수 없어요. 핏로그 JSON 파일인지 확인해 주세요'); }
@@ -647,6 +658,45 @@ function renderSettings() {
     if (!confirm('마지막 확인: 백업은 해두셨나요? 삭제할게요.')) return;
     db = emptyDb(); save(); toast('모두 삭제했어요'); renderSettings();
   };
+}
+
+// ───────── 근거 화면
+const REFS = [
+  { k: 'msj', t: 'Mifflin MD, St Jeor ST, Hill LA, Scott BJ, Daugherty SA, Koh YO. A new predictive equation for resting energy expenditure in healthy individuals. Am J Clin Nutr. 1990;51(2):241–247.', doi: '10.1093/ajcn/51.2.241' },
+  { k: 'morton', t: 'Morton RW, Murphy KT, McKellar SR, et al. A systematic review, meta-analysis and meta-regression of the effect of protein supplementation on resistance training-induced gains in muscle mass and strength in healthy adults. Br J Sports Med. 2018;52(6):376–384.', doi: '10.1136/bjsports-2017-097608' },
+  { k: 'issn', t: 'Jäger R, Kerksick CM, Campbell BI, et al. International Society of Sports Nutrition Position Stand: protein and exercise. J Int Soc Sports Nutr. 2017;14:20.', doi: '10.1186/s12970-017-0177-8' },
+  { k: 'helms', t: 'Helms ER, Aragon AA, Fitschen PJ. Evidence-based recommendations for natural bodybuilding contest preparation: nutrition and supplementation. J Int Soc Sports Nutr. 2014;11:20.', doi: '10.1186/1550-2783-11-20' },
+];
+const DATA_SRCS = [
+  ['농촌진흥청 국가표준식품성분표 제10개정판', '공공데이터포털 15137343 (파일 데이터, 3,310개 식품, 100g당). 일부 항목은 성분표가 국립수산과학원·USDA·일본식품성분표 값을 인용한 것이고, 앱에 원출처를 함께 적었어요.', 'https://www.data.go.kr/data/15137343/fileData.do'],
+  ['식품의약품안전처 통합식품영양성분정보(음식)', '공공데이터포털 15100070. 외식·가정식 음식의 100g(ml)당 값과 1인분 중량. 찌개·볶음 등 섞인 음식은 추정치로 표시해요.', 'https://www.data.go.kr/data/15100070/fileData.do'],
+  ['식품의약품안전처 통합식품영양성분정보(가공식품)', '공공데이터포털 15100066. 시판 닭가슴살·조미김·삼각김밥처럼 제품마다 다른 음식은 같은 종류 제품 여러 개의 100g당 중앙값을 써요.', 'https://www.data.go.kr/data/15100066/fileData.do'],
+  ['USDA FoodData Central (SR Legacy)', '국내 자료에 없는 조리 상태(오븐에 구운 닭가슴살 등)와 웨이 프로틴·땅콩버터 등.', 'https://fdc.nal.usda.gov/'],
+];
+function renderEvidence() {
+  setTitle('근거 · 출처');
+  const t = calcTargets(), cb = ['닭가슴살 (생것)', '닭가슴살 (삶은 것)', '닭가슴살 (구운 것·오븐)', '닭가슴살 (팬에 구운 것)'].map(n => window.FOODS.find(f => f.name === n)).filter(Boolean);
+  const ref = k => { const i = REFS.findIndex(r => r.k === k); return `<sup><a href="#ref-${k}">[${i + 1}]</a></sup>`; };
+  app.innerHTML = `
+    <div class="card ev"><h3>🔥 하루 칼로리 목표</h3>
+      <p class="small">기초대사량(BMR)은 <b>Mifflin-St Jeor 공식</b>${ref('msj')}으로 계산해요.<br>
+      <code>남성 = 10×체중(kg) + 6.25×키(cm) − 5×나이 + 5</code><br><code>여성 = 10×체중 + 6.25×키 − 5×나이 − 161</code></p>
+      <p class="small">여기에 활동계수(1.2~1.9)를 곱해 하루 소비량(TDEE)을 추정해요. 활동계수는 널리 쓰이는 관례적 값이라 개인차가 있어요. 2~3주 체중 추세를 보고 ±100~200kcal씩 조정하는 게 가장 정확해요.</p>
+      <p class="small"><b>감량</b>은 TDEE의 82%(약 −18%)로 잡아요. 체중이 주당 <b>0.5~1%</b>씩 빠지는 속도가 근손실을 줄이는 데 권장돼요${ref('helms')}. 예: 75kg이면 주당 0.4~0.75kg. 그보다 빨리 빠지면 칼로리를 조금 올리세요. 최저치(남 1500 / 여 1200kcal)는 너무 낮게 먹지 않도록 앱이 정한 안전 하한이에요.</p>
+      ${t && t.bmr ? `<div class="tip">상우님 현재 값: BMR ${fmt(t.bmr)} → TDEE ${fmt(t.tdee)} → 목표 ${fmt(t.kcal)}kcal</div>` : ''}</div>
+    <div class="card ev"><h3>🥩 단백질 목표</h3>
+      <p class="small">근력운동을 하는 사람에게 <b>체중 1kg당 1.6~2.2g</b>을 권해요. 49개 연구(1,863명) 메타분석에서 근육 증가 효과는 하루 약 <b>1.62g/kg</b>에서 더 늘지 않았고, 95% 신뢰구간 상한이 약 2.2g/kg이었어요${ref('morton')}. 국제스포츠영양학회(ISSN) 입장문은 운동하는 사람 대부분에게 1.4~2.0g/kg을 권하고, 감량 중에는 더 높은 섭취가 근육 유지에 도움이 될 수 있다고 해요${ref('issn')}. 감량기 보디빌더 대상 리뷰는 제지방량 1kg당 2.3~3.1g을 제안해요${ref('helms')}.</p>
+      <p class="small">앱 기본값은 <b>2.0g/kg</b>(감량 중이라 범위 위쪽)이고, 설정에서 1.6~2.2g 중 고를 수 있어요. 지방은 칼로리의 25%, 나머지는 탄수화물로 채워요(앱 기본값).</p></div>
+    <div class="card ev"><h3>🐔 닭가슴살 100g에 단백질 36g?</h3>
+      <p class="small">맞을 수도, 아닐 수도 있어요. <b>익히면 수분이 빠져 같은 고기가 가벼워지기</b> 때문에, 100g당 단백질은 생것보다 익힌 것이 높아요. 그래서 무게를 <b>익히기 전에 쟀는지, 익힌 뒤에 쟀는지</b>에 맞는 항목을 고르는 게 중요해요.</p>
+      <table class="ptable">${cb.map(f => `<tr><th>${esc(f.name.replace('닭가슴살 ', ''))}</th><td><b>${fmt(f.p)}g</b> · ${fmt(f.k)}kcal <span class="muted">(${esc(f.src)})</span></td></tr>`).join('')}</table>
+      <p class="small muted">36g 근처 값은 팬에 구워 수분이 많이 빠진 상태(농진청 35.5g)예요. 시판 훈제·스테이크 닭가슴살은 양념·수분이 들어가 보통 100g당 20~25g이에요. 포장지 값이 있으면 그 값이 가장 정확해요.</p></div>
+    <div class="card ev"><h3>🍱 음식 데이터 출처</h3>
+      ${DATA_SRCS.map(s => `<p class="small"><b>${s[0]}</b><br>${s[1]}<br><a href="${s[2]}" target="_blank" rel="noopener">${s[2]}</a></p>`).join('')}
+      <p class="small">모든 값은 100g(음료·국물은 100ml)당으로 저장해요. "한 줌", "1봉" 같은 분량은 제품 표시중량, 식약처 1인분 중량, 일반 계량 기준이고, <b>약</b>이 붙은 분량은 어림값이에요. 한 번 기록한 양은 다음에 같은 음식을 고를 때 그대로 기억해요.</p>
+      <p class="small muted">음식 수: ${window.FOODS.length}개 · 출처별 ${Object.entries(window.FOODS.reduce((a, f) => (a[f.src] = (a[f.src] || 0) + 1, a), {})).map(([k, v]) => `${k} ${v}`).join(' · ')}</p></div>
+    <div class="card ev"><h3>📄 참고문헌</h3><ol class="refs small">${REFS.map(r => `<li id="ref-${r.k}">${esc(r.t)} <a href="https://doi.org/${r.doi}" target="_blank" rel="noopener">doi:${r.doi}</a></li>`).join('')}</ol>
+      <p class="small muted">이 앱은 건강한 성인을 위한 일반 정보예요. 질환이 있거나 약을 먹고 있다면 의사·영양사와 상의하세요.</p></div>`;
 }
 
 // ───────── 날짜 바 (공용)
@@ -715,8 +765,8 @@ function dietTip(t, tot) {
   if (!tot.count) return `오늘 목표는 ${fmt(t.kcal)}kcal, 단백질 ${t.protein}g이에요. 첫 끼를 기록해 보세요!`;
   const pr = t.protein - tot.protein, kr = t.kcal - tot.kcal, parts = [];
   if (pr >= 10) {
-    const g = Math.round(pr / 0.31 / 10) * 10;
-    parts.push(pr < 40 ? `단백질 ${Math.round(pr)}g 더 필요해요 — 닭가슴살 ${g}g 정도${pr >= 20 ? ` 또는 프로틴 ${Math.max(1, Math.round(pr / 24 * 2) / 2)}스쿱` : ''}` : `단백질 ${Math.round(pr)}g 더 필요해요 — 닭가슴살 ${g}g 정도 (남은 끼니에 나눠서, 프로틴 1스쿱 ≈ 24g)`);
+    const g = Math.round(pr / 0.31 / 10) * 10; // 익힌(오븐) 닭가슴살 100g당 단백질 31g (USDA)
+    parts.push(pr < 40 ? `단백질 ${Math.round(pr)}g 더 필요해요 — 익힌 닭가슴살 ${g}g 정도${pr >= 20 ? ` 또는 프로틴 ${Math.max(1, Math.round(pr / 24 * 2) / 2)}스쿱` : ''}` : `단백질 ${Math.round(pr)}g 더 필요해요 — 익힌 닭가슴살 ${g}g 정도 (남은 끼니에 나눠서, 프로틴 1스쿱 ≈ 24g)`);
   } else parts.push('단백질 목표 거의 달성! 👏');
   if (kr < -100) parts.push(`칼로리는 목표보다 ${fmt(-kr)}kcal 많아요. 다음 끼는 가볍게 가봐요`);
   else if (kr > 0) parts.push(`남은 칼로리 ${fmt(kr)}kcal`);
@@ -741,8 +791,27 @@ function todayDietHtml() {
 }
 
 // ───────── 식단 화면
+// 음식 DB(foods.js)는 100g(음료·국물은 100ml)당 값 + 이름 붙은 분량(por: [라벨, g])을 가져요.
+// 옛 방식(1회 제공량당 값) 직접입력 음식은 per100이 없으므로 "인분" 단위로만 다뤄요.
 const allFoods = () => [...window.FOODS, ...db.customFoods];
 const foodById = id => allFoods().find(f => f.id === id);
+const per100 = f => f && f.k != null ? { kcal: f.k, protein: f.p, carbs: f.c, fat: f.f } : null;
+const uOf = f => (f && f.unit) || 'g';
+const porLbl = (f, p) => /\d/.test(p[0]) && p[0].includes(String(p[1])) ? p[0].replace(/≈$/, '') : `${p[0].replace(/≈$/, '')} (${p[0].endsWith('≈') ? '약 ' : ''}${fmt(p[1])}${uOf(f)})`;
+const SRC_LBL = { '농진청': '농촌진흥청 국가표준식품성분표', '식약처': '식약처 식품영양성분DB(음식)', '식약처 제품': '식약처 가공식품DB', 'USDA': 'USDA FoodData Central', '직접 입력': '직접 입력' };
+function macrosFor(f, g) { const v = per100(f); return { kcal: v.kcal * g / 100, protein: v.protein * g / 100, carbs: v.carbs * g / 100, fat: v.fat * g / 100 }; }
+function defaultAmt(f) {
+  const last = db.lastAmt[f.id];
+  if (last && last.g > 0) return { ...last };
+  if (!per100(f)) return { n: 1 };
+  const p = (f.por || [])[0];
+  return p ? { p: 0, n: 1, g: p[1] } : { g: 100 };
+}
+function foodSub(f) {
+  if (!per100(f)) return `${esc(f.serving)} · ${fmt(f.kcal)}kcal · 단백질 ${fmt(f.protein)}g`;
+  const p = (f.por || [])[0], g = p ? p[1] : 100, m = macrosFor(f, g);
+  return `${p ? esc(porLbl(f, p)) : `100${uOf(f)}`} ${m.kcal >= 10 ? Math.round(m.kcal).toLocaleString('ko-KR') : fmt(m.kcal)}kcal · 단 ${fmt(m.protein)}g <span class="src-tag">${esc(f.src || '')}${f.est ? '·추정' : ''}</span>`;
+}
 let foodCat = null;
 function renderDiet() {
   setTitle(curDate === todayStr() ? '오늘의 식단' : '식단 기록');
@@ -764,7 +833,7 @@ function renderDiet() {
         <button class="btn sm block ghost add-food" data-meal="${m}">＋ ${m} 추가</button></section>`;
     }).join('')}
     <button class="btn block" id="pasteBtn">📋 코치 데이터 붙여넣기</button>
-    <p class="muted small" style="margin:12px 4px">ⓘ 음식 칼로리·영양소는 일반적인 1회 제공량 기준 추정치예요. 조리법·브랜드·양에 따라 달라질 수 있어요.</p>`;
+    <p class="muted small" style="margin:12px 4px">ⓘ 음식 값은 농촌진흥청 국가표준식품성분표·식약처 식품영양성분DB·USDA 자료의 100g당 값이에요. 같은 음식도 조리법·제품·양에 따라 달라요. <a href="#/evidence">근거 보기</a></p>`;
   bindDateBar(renderDiet);
   app.querySelectorAll('.add-food').forEach(b => b.onclick = () => openFoodPicker(b.dataset.meal));
   app.querySelectorAll('.food-row').forEach(b => b.onclick = () => { const e = db.meals[curDate][+b.dataset.i]; openAmount({ ...e }, { meal: e.meal, editIndex: +b.dataset.i }); });
@@ -793,41 +862,129 @@ function weightSummary(date) {
 function recentFoods() {
   const out = [], seen = new Set();
   for (const d of Object.keys(db.meals).sort().reverse()) for (const e of db.meals[d].slice().reverse()) {
-    const key = e.foodId || 'n:' + e.name + '|' + e.serving;
+    const f = e.foodId && foodById(e.foodId);
+    const key = f ? f.id : 'n:' + e.name + '|' + e.serving;
     if (seen.has(key)) continue; seen.add(key);
-    out.push((e.foodId && foodById(e.foodId)) || { id: null, name: e.name, serving: e.serving, kcal: e.kcal, protein: e.protein, carbs: e.carbs, fat: e.fat, cat: '최근' });
+    out.push(f || { id: null, name: e.name, serving: e.serving, kcal: e.kcal, protein: e.protein, carbs: e.carbs, fat: e.fat, cat: '최근', legacy: true });
     if (out.length >= 30) return out;
   }
   return out;
+}
+const norm = s => String(s || '').replace(/[\s·()]/g, '').toLowerCase();
+function searchFoods(q, list = allFoods()) {
+  const s = norm(q); if (!s) return list;
+  const scored = [];
+  for (const f of list) {
+    const n = norm(f.name), a = norm(f.aka) + norm(f.cat), words = String(f.aka || '').toLowerCase().split(/\s+/);
+    const sc = n === s ? 0 : words.includes(s) ? 1 : n.startsWith(s) ? 2 : n.includes(s) ? 3 : a.includes(s) ? 4 : -1;
+    if (sc >= 0) scored.push([sc, scored.length, f]);
+  }
+  return scored.sort((x, y) => x[0] - y[0] || x[1] - y[1]).map(x => x[2]);
 }
 function openFoodPicker(meal) {
   let q = '';
   let cat = foodCat || (recentFoods().length ? '최근' : '전체');
   const chips = ['최근', '즐겨찾기', '내 음식', '전체', ...window.FOOD_CATS];
   openSheet(`<h2>${meal}에 음식 추가</h2>
-    <input class="search" id="fq" placeholder="음식 검색 (예: 닭가슴살, 김치찌개)" autocomplete="off">
+    <input class="search" id="fq" placeholder="음식 검색 (예: 닭가슴살, 김, 황태채)" autocomplete="off">
     <div class="chips" id="fc"></div><div id="fl"></div>
-    <button class="btn block" id="fcustom" style="margin-top:6px">✏️ 직접 입력 (칼로리·영양소)</button>`, body => {
+    <button class="btn block" id="fcustom" style="margin-top:6px">✏️ 목록에 없어요 · 직접 입력</button>`, body => {
     let shown = [];
     const draw = () => {
       $('#fc', body).innerHTML = chips.map(c => `<button class="chip ${c === cat ? 'on' : ''}" data-c="${c}">${c}</button>`).join('');
       let list = cat === '최근' ? recentFoods() : cat === '즐겨찾기' ? db.favFoods.map(foodById).filter(Boolean) : cat === '내 음식' ? db.customFoods : cat === '전체' ? allFoods() : allFoods().filter(f => f.cat === cat);
-      if (q) { const s = q.replace(/\s/g, '').toLowerCase(); list = allFoods().filter(f => (f.name + f.cat).replace(/\s/g, '').toLowerCase().includes(s)); }
+      if (q) list = searchFoods(q);
       shown = list;
-      $('#fl', body).innerHTML = list.map((f, i) => `<button class="list-item" data-k="${i}"><div><div class="t">${db.favFoods.includes(f.id) ? '⭐ ' : ''}${esc(f.name)}</div><div class="s">${esc(f.serving)} · ${fmt(f.kcal)}kcal · 단백질 ${fmt(f.protein)}g</div></div><span class="chev">＋</span></button>`).join('')
+      $('#fl', body).innerHTML = list.slice(0, 120).map((f, i) => `<button class="list-item" data-k="${i}"><div><div class="t">${db.favFoods.includes(f.id) ? '⭐ ' : ''}${esc(f.name)}</div><div class="s">${foodSub(f)}</div></div><span class="chev">＋</span></button>`).join('')
         || `<div class="empty" style="padding:20px">${cat === '즐겨찾기' && !q ? '음식을 추가할 때 ⭐를 누르면 여기 모여요.' : cat === '최근' && !q ? '최근 먹은 음식이 여기 표시돼요.' : '찾는 음식이 없어요. 아래에서 직접 입력해 주세요.'}</div>`;
     };
     draw();
     $('#fq', body).addEventListener('input', e => { q = e.target.value.trim(); draw(); });
     $('#fc', body).onclick = e => { const c = e.target.closest('[data-c]'); if (c) { cat = foodCat = c.dataset.c; q = ''; $('#fq', body).value = ''; draw(); } };
-    $('#fl', body).onclick = e => { const b = e.target.closest('[data-k]'); if (!b) return; const f = shown[+b.dataset.k]; openAmount({ foodId: f.id || undefined, name: f.name, serving: f.serving, kcal: f.kcal, protein: f.protein, carbs: f.carbs, fat: f.fat, qty: 1 }, { meal }); };
+    $('#fl', body).onclick = e => {
+      const b = e.target.closest('[data-k]'); if (!b) return; const f = shown[+b.dataset.k];
+      if (f.legacy || !f.id || !per100(f)) openAmount({ foodId: f.id || undefined, name: f.name, serving: f.serving, kcal: f.kcal, protein: f.protein, carbs: f.carbs, fat: f.fat, qty: 1 }, { meal });
+      else openAmount({ foodId: f.id, name: f.name }, { meal });
+    };
     $('#fcustom', body).onclick = () => openCustomFood(meal, q);
   });
 }
+function srcHtml(f) {
+  if (!per100(f)) return '';
+  const v = per100(f), u = uOf(f);
+  return `<div class="srcbox small">
+    <div><b>100${u}당</b> ${fmt(v.kcal)}kcal · 단백질 ${fmt(v.protein)}g · 탄수 ${fmt(v.carbs)}g · 지방 ${fmt(v.fat)}g</div>
+    ${f.state ? `<div>상태: ${esc(f.state)}</div>` : ''}
+    <div class="muted">출처: ${f.src === '식약처 제품' ? esc(f.srcNote) : `${esc(SRC_LBL[f.src] || f.src || '')}${f.srcName ? ` — ${esc(f.srcName)}` : ''}${f.srcNote && f.src !== '직접 입력' ? `<br>${esc(f.srcNote)}` : ''}`}</div>
+    ${f.est ? '<div class="warn">여러 재료가 섞인 음식이라 집·식당마다 차이가 커요(추정치).</div>' : ''}
+    ${f.note ? `<div>💡 ${esc(f.note)}</div>` : ''}
+    ${(f.por || []).some(p => p[0].endsWith('≈')) ? '<div class="muted">"약"이 붙은 분량은 일반적인 어림값이에요. 정확히 하려면 g으로 입력하세요.</div>' : ''}
+  </div>`;
+}
 function openAmount(e, { meal, editIndex }) {
+  const editing = editIndex != null;
+  const f = e.foodId ? foodById(e.foodId) : null;
+  // 100g당 값이 있는 음식이고, (새로 추가) 또는 (g 정보가 저장된 기록)일 때 g 기반 화면
+  if (f && per100(f) && (!editing || e.g > 0)) return openAmountG(f, e, { meal, editIndex });
+  return openAmountLegacy(e, { meal, editIndex });
+}
+function openAmountG(f, e, { meal, editIndex }) {
+  const editing = editIndex != null, u = uOf(f);
+  let a = editing && e.amt ? { ...e.amt, g: e.g } : editing ? { g: e.g } : defaultAmt(f), m = meal;
+  const por = f.por || [];
+  const grams = () => a.p != null && por[a.p] ? por[a.p][1] * a.n : a.g;
+  openSheet(`<h2>${esc(f.name)}</h2>
+    <div class="field"><label>분량 고르기</label><div class="chips wrap" id="ap">
+      ${por.map((p, i) => `<button class="chip" data-p="${i}">${esc(porLbl(f, p))}</button>`).join('')}
+      <button class="chip" data-p="g100">100${u}</button></div></div>
+    <div class="field" id="anf"><label>개수</label>
+      <div class="stepper"><button class="btn" data-d="-0.5">−</button><input id="an" type="number" inputmode="decimal" step="0.5" min="0.25"><button class="btn" data-d="0.5">＋</button></div></div>
+    <div class="field"><label>또는 정확한 양 (${u})</label><div class="row"><input id="ag" class="num-in" type="number" inputmode="decimal" min="0" step="1" placeholder="예: 150"><span class="muted">${u}</span></div></div>
+    <div class="card" id="atot"></div>
+    ${srcHtml(f)}
+    <div class="field"><label>끼니</label><div class="chips" id="am">${MEALS.map(x => `<button class="chip ${x === m ? 'on' : ''}" data-m="${x}">${x}</button>`).join('')}</div></div>
+    <button class="btn block ghost" id="afav" style="margin-bottom:8px"></button>
+    <div class="row">${editing ? '<button class="btn danger" id="adel" style="flex:1">삭제</button>' : '<button class="btn ghost" id="acancel" style="flex:1">취소</button>'}
+    <button class="btn primary" id="aok" style="flex:2">${editing ? '저장' : '추가하기'}</button></div>`, body => {
+    const draw = (fromInput) => {
+      const g = grams() || 0, mm = macrosFor(f, g);
+      body.querySelectorAll('#ap .chip').forEach(c => c.classList.toggle('on', a.p != null && String(c.dataset.p) === String(a.p)));
+      $('#anf', body).style.display = a.p != null ? '' : 'none';
+      if (a.p != null) $('#an', body).value = a.n;
+      if (fromInput !== 'g') $('#ag', body).value = g ? r1(g) : '';
+      $('#atot', body).innerHTML = `<div class="small muted" style="margin-bottom:6px">${g ? `총 <b id="agt">${fmt(g)}${u}</b>${a.p != null ? ` = ${esc(porLbl(f, por[a.p]))} × ${fmt(a.n)}` : ''}` : '양을 골라 주세요'}</div>
+        <div class="macro-grid four"><div><span class="muted small">칼로리</span><b id="akc">${fmt(mm.kcal)}</b></div><div><span class="muted small">단백질</span><b id="apr">${fmt(mm.protein)}g</b></div><div><span class="muted small">탄수</span><b>${fmt(mm.carbs)}g</b></div><div><span class="muted small">지방</span><b>${fmt(mm.fat)}g</b></div></div>`;
+      $('#afav', body).textContent = db.favFoods.includes(f.id) ? '⭐ 즐겨찾기 해제' : '☆ 즐겨찾기에 추가';
+    };
+    draw();
+    $('#ap', body).onclick = ev => { const c = ev.target.closest('[data-p]'); if (!c) return; if (c.dataset.p === 'g100') a = { g: 100 }; else a = { p: +c.dataset.p, n: a.p === +c.dataset.p ? a.n : 1 }; draw(); };
+    body.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { a.n = Math.max(0.25, Math.round((a.n + +b.dataset.d) * 4) / 4); draw(); });
+    $('#an', body).addEventListener('input', ev => { const v = Number(ev.target.value); if (v > 0) { a.n = v; draw('n'); $('#an', body).value = ev.target.value; } });
+    $('#ag', body).addEventListener('input', ev => { const v = Number(ev.target.value); if (v > 0) { a = { g: v }; draw('g'); } });
+    $('#am', body).onclick = ev => { const c = ev.target.closest('[data-m]'); if (c) { m = c.dataset.m; body.querySelectorAll('#am .chip').forEach(x => x.classList.toggle('on', x.dataset.m === m)); } };
+    $('#afav', body).onclick = () => { const i = db.favFoods.indexOf(f.id); if (i >= 0) db.favFoods.splice(i, 1); else db.favFoods.push(f.id); save(); draw(); };
+    const c = $('#acancel', body); if (c) c.onclick = closeSheet;
+    const d = $('#adel', body); if (d) d.onclick = () => { db.meals[curDate].splice(editIndex, 1); save(); closeSheet(); toast('삭제했어요'); renderDiet(); };
+    $('#aok', body).onclick = () => {
+      const g = grams(); if (!(g > 0)) return toast('먹은 양을 입력해 주세요');
+      const mm = macrosFor(f, g);
+      const serving = a.p != null ? `${porLbl(f, por[a.p])}${a.n !== 1 ? ` × ${fmt(a.n)}` : ''}` : `${fmt(g)}${u}`;
+      const amt = a.p != null ? { p: a.p, n: a.n } : {};
+      const entry = normEntry({ id: editIndex != null ? e.id : undefined, foodId: f.id, name: f.name, serving, qty: 1, g: r1(g), amt, meal: m,
+        kcal: Math.round(mm.kcal), protein: r1(mm.protein), carbs: r1(mm.carbs), fat: r1(mm.fat) });
+      db.lastAmt[f.id] = { ...amt, g: r1(g) };
+      const list = db.meals[curDate] || (db.meals[curDate] = []);
+      if (editIndex != null) list[editIndex] = entry; else list.push(entry);
+      save(); closeSheet(); toast(editIndex != null ? '수정했어요' : `${m}에 ${f.name} ${serving} 추가!`);
+      if (location.hash.startsWith('#/diet')) renderDiet(); else go('#/diet');
+    };
+  });
+}
+// 옛 기록(1회 제공량 × 인분)과 옛 방식 직접입력 음식용
+function openAmountLegacy(e, { meal, editIndex }) {
   let qty = e.qty || 1, m = meal;
   const editing = editIndex != null;
-  openSheet(`<h2>${esc(e.name)}</h2><div class="muted small" style="margin-top:-8px;margin-bottom:12px">1회 제공량: ${esc(e.serving)} · ${fmt(e.kcal)}kcal</div>
+  openSheet(`<h2>${esc(e.name)}</h2><div class="muted small" style="margin-top:-8px;margin-bottom:12px">1회 제공량: ${esc(e.serving)} · ${fmt(e.kcal)}kcal${e.g ? '' : ' (예전 방식으로 저장된 값이에요)'}</div>
     <div class="field"><label>먹은 양 (인분)</label>
       <div class="stepper"><button class="btn" data-d="-0.5">−</button><input id="aq" type="number" inputmode="decimal" step="0.25" min="0.1" value="${qty}"><button class="btn" data-d="0.5">＋</button></div>
       <div class="chips" style="margin-top:8px">${[0.5, 1, 1.5, 2, 3].map(v => `<button class="chip" data-q="${v}">${v}인분</button>`).join('')}</div></div>
@@ -837,10 +994,10 @@ function openAmount(e, { meal, editIndex }) {
     <div class="row">${editing ? '<button class="btn danger" id="adel" style="flex:1">삭제</button>' : '<button class="btn ghost" id="acancel" style="flex:1">취소</button>'}
     <button class="btn primary" id="aok" style="flex:2">${editing ? '저장' : '추가하기'}</button></div>`, body => {
     const drawTot = () => {
-      $('#atot', body).innerHTML = `<div class="macro-grid four"><div><span class="muted small">칼로리</span><b>${fmt(e.kcal * qty)}</b></div><div><span class="muted small">단백질</span><b>${fmt(e.protein * qty)}g</b></div><div><span class="muted small">탄수</span><b>${fmt(e.carbs * qty)}g</b></div><div><span class="muted small">지방</span><b>${fmt(e.fat * qty)}g</b></div></div>`;
+      $('#atot', body).innerHTML = `<div class="macro-grid four"><div><span class="muted small">칼로리</span><b id="akc">${fmt(e.kcal * qty)}</b></div><div><span class="muted small">단백질</span><b id="apr">${fmt(e.protein * qty)}g</b></div><div><span class="muted small">탄수</span><b>${fmt(e.carbs * qty)}g</b></div><div><span class="muted small">지방</span><b>${fmt(e.fat * qty)}g</b></div></div>`;
       const fb = $('#afav', body); if (fb) fb.textContent = db.favFoods.includes(e.foodId) ? '⭐ 즐겨찾기 해제' : '☆ 즐겨찾기에 추가';
     };
-    const setQ = v => { qty = Math.max(0.25, r1(v * 4) / 4 || 0.25); qty = Math.round(qty * 100) / 100; $('#aq', body).value = qty; drawTot(); };
+    const setQ = v => { qty = Math.max(0.25, Math.round(v * 4) / 4 || 0.25); $('#aq', body).value = qty; drawTot(); };
     drawTot();
     body.querySelectorAll('[data-d]').forEach(b => b.onclick = () => setQ(qty + +b.dataset.d));
     body.querySelectorAll('[data-q]').forEach(b => b.onclick = () => setQ(+b.dataset.q));
@@ -858,27 +1015,82 @@ function openAmount(e, { meal, editIndex }) {
     };
   });
 }
+const PORTION_GUIDE = [
+  ['한 줌 (가볍게 쥔 손)', '견과 약 25g · 건어물(황태채·멸치) 약 10g · 시리얼 약 30g'],
+  ['한 컵 (종이컵 200ml)', '우유·두유 200g · 황태채(가볍게 담아) 약 20g · 밥 약 150g'],
+  ['1큰술 (밥숟가락 15ml)', '기름 13g · 꿀 20g · 고추장·된장 18g · 설탕 12g'],
+  ['1작은술 (찻숟가락 5ml)', '기름 4g · 설탕 4g'],
+  ['한 조각', '피자 약 100~120g · 케이크 약 80~100g · 치킨(뼈 포함) 약 60g'],
+  ['손바닥 크기 고기', '두께 1cm 정도면 약 100g (익힌 무게)'],
+  ['1공기', '밥 210g (즉석밥 1개와 같아요)'],
+];
 function openCustomFood(meal, name = '') {
+  let basis = '100', portions = [];
   openSheet(`<h2>음식 직접 입력</h2>
     <div class="field"><label>음식 이름</label><input id="cfn" value="${esc(name)}" maxlength="40" placeholder="예: 엄마표 김치볶음밥"></div>
-    <div class="field"><label>양 (1회 기준)</label><input id="cfs" value="1인분" maxlength="30"></div>
+    <div class="field"><label>🔎 비슷한 음식으로 값 채우기 <span class="muted small">(선택)</span></label>
+      <input id="cfq" class="search" placeholder="예: 김치볶음밥 → 볶음밥" autocomplete="off" value="${esc(name)}"><div id="cfl"></div></div>
+    <div class="field"><label>영양성분표 기준</label><div class="chips" id="cfb">
+      <button class="chip on" data-b="100">100g당</button><button class="chip" data-b="serv">1회 제공량(포장지 표기)당</button></div></div>
+    <div class="field" id="cfsw" style="display:none"><label>그 1회 제공량은 몇 g인가요?</label><div class="row"><input id="cfsg" class="num-in" type="number" inputmode="decimal" min="0" placeholder="예: 30"><span class="muted">g</span></div></div>
     <div class="grid2">
       <div class="field"><label>칼로리 (kcal)</label><input id="cfk" type="number" inputmode="decimal" min="0"></div>
       <div class="field"><label>단백질 (g)</label><input id="cfp" type="number" inputmode="decimal" min="0"></div>
       <div class="field"><label>탄수화물 (g)</label><input id="cfc" type="number" inputmode="decimal" min="0"></div>
       <div class="field"><label>지방 (g)</label><input id="cff" type="number" inputmode="decimal" min="0"></div></div>
+    <div class="field"><label>내가 먹은 양 (g)</label><div class="row"><input id="cfeat" class="num-in" type="number" inputmode="decimal" min="0" placeholder="예: 30"><span class="muted">g</span></div>
+      <div class="small muted" id="cfprev" style="margin-top:6px"></div></div>
+    <details class="guide"><summary>📏 분량 감 잡기 (한 줌·한 컵·한 스푼)</summary>
+      <table class="ptable">${PORTION_GUIDE.map(r => `<tr><th>${r[0]}</th><td>${r[1]}</td></tr>`).join('')}</table>
+      <p class="small muted">가장 정확한 건 주방 저울이에요. 한 번만 재 보면 다음부터는 눈대중이 정확해져요.</p></details>
+    <details class="guide"><summary>🏷️ 영양성분표 읽는 법</summary>
+      <ul class="small"><li><b>총 내용량</b>: 포장 하나에 든 전체 양 (예: 총 내용량 40g).</li>
+      <li><b>1회 제공량</b>(또는 "1회 섭취참고량"): 표의 숫자가 기준으로 삼은 양. 총 내용량보다 작을 수 있어요 (예: 40g 봉지인데 표는 20g 기준).</li>
+      <li>표 맨 위에 "총 내용량 ○g당", "1회 제공량 ○g당", "100g당" 중 무엇인지 먼저 확인하고, 위 <b>기준</b>을 같게 고르세요.</li>
+      <li>봉지를 다 먹었다면 먹은 양에 <b>총 내용량</b>을 넣으면 돼요.</li></ul></details>
     <label class="check"><input type="checkbox" id="cfsave" checked> 내 음식에 저장해서 다음에도 쓰기</label>
     <div class="row" style="margin-top:12px"><button class="btn ghost" id="cfx" style="flex:1">취소</button><button class="btn primary" id="cfo" style="flex:2">${meal}에 추가</button></div>`, body => {
+    const vals = () => ({ k: $('#cfk', body).value, p: $('#cfp', body).value, c: $('#cfc', body).value, f: $('#cff', body).value });
+    const to100 = v => { const sg = Number($('#cfsg', body).value); const r = basis === '100' ? 1 : sg > 0 ? 100 / sg : null; return r == null ? null : { k: nz(v.k) * r, p: nz(v.p) * r, c: nz(v.c) * r, f: nz(v.f) * r }; };
+    const prev = () => {
+      const v = vals(), eat = Number($('#cfeat', body).value), h = to100(v);
+      $('#cfprev', body).textContent = v.k === '' ? '' : !h ? '1회 제공량의 g을 입력해 주세요' : eat > 0 ? `→ ${fmt(eat)}g = ${fmt(h.k * eat / 100)}kcal · 단백질 ${fmt(h.p * eat / 100)}g` : `→ 100g당 ${fmt(h.k)}kcal · 단백질 ${fmt(h.p)}g`;
+    };
+    const drawSim = () => {
+      const q = $('#cfq', body).value.trim();
+      const list = q ? searchFoods(q, window.FOODS).slice(0, 5) : [];
+      $('#cfl', body).innerHTML = list.map((f, i) => `<button class="list-item sm" data-s="${i}"><div><div class="t">${esc(f.name)}</div><div class="s">100${uOf(f)}당 ${fmt(f.k)}kcal · 단 ${fmt(f.p)}g · ${esc(f.src)}</div></div><span class="chev">채우기</span></button>`).join('');
+      $('#cfl', body).onclick = ev => {
+        const b = ev.target.closest('[data-s]'); if (!b) return; const f = list[+b.dataset.s];
+        basis = '100'; body.querySelectorAll('#cfb .chip').forEach(c => c.classList.toggle('on', c.dataset.b === '100')); $('#cfsw', body).style.display = 'none';
+        $('#cfk', body).value = f.k; $('#cfp', body).value = f.p; $('#cfc', body).value = f.c; $('#cff', body).value = f.f;
+        portions = (f.por || []).map(p => [...p]);
+        if (!$('#cfeat', body).value && portions[0]) $('#cfeat', body).value = portions[0][1];
+        if (!$('#cfn', body).value.trim()) $('#cfn', body).value = f.name;
+        toast(`${f.name}의 100g당 값으로 채웠어요. 포장지 값이 있으면 고쳐 주세요`); prev();
+      };
+    };
+    drawSim();
+    $('#cfq', body).addEventListener('input', drawSim);
+    $('#cfb', body).onclick = ev => { const c = ev.target.closest('[data-b]'); if (!c) return; basis = c.dataset.b; body.querySelectorAll('#cfb .chip').forEach(x => x.classList.toggle('on', x === c)); $('#cfsw', body).style.display = basis === 'serv' ? '' : 'none'; prev(); };
+    body.querySelectorAll('#cfk,#cfp,#cfc,#cff,#cfsg,#cfeat').forEach(i => i.addEventListener('input', prev));
     $('#cfx', body).onclick = closeSheet;
     $('#cfo', body).onclick = () => {
-      const n = $('#cfn', body).value.trim(), k = $('#cfk', body).value;
+      const n = $('#cfn', body).value.trim(), v = vals();
       if (!n) return toast('음식 이름을 입력해 주세요');
-      if (k === '' || !(Number(k) >= 0)) return toast('칼로리를 입력해 주세요');
-      const f = { id: 'cf_' + uid(), name: n, serving: $('#cfs', body).value.trim() || '1회', kcal: nz(k), protein: nz($('#cfp', body).value), carbs: nz($('#cfc', body).value), fat: nz($('#cff', body).value), cat: '내 음식', custom: true };
+      if (v.k === '' || !(Number(v.k) >= 0)) return toast('칼로리를 입력해 주세요');
+      const h = to100(v); if (!h) return toast('1회 제공량이 몇 g인지 입력해 주세요');
+      const eat = Number($('#cfeat', body).value) || (basis === 'serv' ? Number($('#cfsg', body).value) : 0);
+      if (!(eat > 0)) return toast('먹은 양(g)을 입력해 주세요');
+      const sg = Number($('#cfsg', body).value);
+      const por = basis === 'serv' && sg > 0 ? [['1회 제공량', sg], ...portions] : portions;
+      const f = { id: 'cf_' + uid(), name: n, cat: '내 음식', custom: true, k: r1(h.k), p: r1(h.p), c: r1(h.c), f: r1(h.f), unit: 'g', por, src: '직접 입력', srcName: basis === 'serv' ? `포장지 ${fmt(sg)}g당 값을 100g당으로 환산` : '100g당 값', state: '' };
       const saveIt = $('#cfsave', body).checked;
       if (saveIt) db.customFoods.push(f);
+      const mm = macrosFor(f, eat);
       const list = db.meals[curDate] || (db.meals[curDate] = []);
-      list.push(normEntry({ ...f, foodId: saveIt ? f.id : undefined, qty: 1, meal }));
+      list.push(normEntry({ foodId: saveIt ? f.id : undefined, name: n, serving: `${fmt(eat)}g`, qty: 1, g: eat, amt: {}, meal, kcal: Math.round(mm.kcal), protein: r1(mm.protein), carbs: r1(mm.carbs), fat: r1(mm.fat) }));
+      if (saveIt) db.lastAmt[f.id] = { g: eat };
       save(); closeSheet(); toast(`${meal}에 ${n} 추가!`); renderDiet();
     };
   });
@@ -949,7 +1161,7 @@ function targetSummaryHtml() {
       ${t.bmr ? `<div><span class="muted small">기초대사량</span><b>${fmt(t.bmr)}</b></div><div><span class="muted small">활동대사량(TDEE)</span><b>${fmt(t.tdee)}</b></div>` : ''}
       <div><span class="muted small">하루 목표</span><b class="up">${fmt(t.kcal)}kcal</b></div>
       <div><span class="muted small">단백질</span><b>${t.protein}g</b></div><div><span class="muted small">탄수화물</span><b>${t.carbs}g</b></div><div><span class="muted small">지방</span><b>${t.fat}g</b></div></div>
-    <p class="muted small" style="margin:8px 0 0">${db.profile.kcalOverride ? '칼로리는 직접 입력한 값이에요.' : `${g.lbl}: ${g.desc}${t.floorHit ? ' · 너무 낮지 않게 최소치로 맞췄어요' : ''}.`} 지방은 칼로리의 25%, 나머지는 탄수화물로 계산해요.${Object.keys(db.weights).length ? ' 체중 기록이 있으면 최신 체중을 써요.' : ''} 공식: Mifflin-St Jeor.</p>`;
+    <p class="muted small" style="margin:8px 0 0">${db.profile.kcalOverride ? '칼로리는 직접 입력한 값이에요.' : `${g.lbl}: ${g.desc}${t.floorHit ? ' · 너무 낮지 않게 최소치로 맞췄어요' : ''}.`} 지방은 칼로리의 25%, 나머지는 탄수화물로 계산해요.${Object.keys(db.weights).length ? ' 체중 기록이 있으면 최신 체중을 써요.' : ''} 공식: Mifflin-St Jeor (1990). <a href="#/evidence">근거 보기</a></p>`;
 }
 function bindProfile() {
   const box = $('#profile'); if (!box) return;
@@ -1076,5 +1288,5 @@ route();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
-window.__fitlog = { get db() { return db; }, metrics, sessionsFor, isPlateau, nextTarget, calcTargets, dayTotals, parsePaste };
+window.__fitlog = { get db() { return db; }, metrics, sessionsFor, isPlateau, nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods };
 })();
