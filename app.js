@@ -53,7 +53,7 @@ function normEntry(it) {
 }
 function normalize(d) {
   const out = emptyDb();
-  out.custom = (d.custom || []).filter(c => c && c.id && c.name);
+  out.custom = (d.custom || []).filter(c => c && c.id && c.name).map(c => c.group === '코어' ? { ...c, group: '복근' } : c);
   out.meta = isObj(d.meta) ? d.meta : {};
   for (const [k, v] of Object.entries(d.workouts || {})) {
     const items = v.map(it => ({ exId: it.exId, sets: it.sets.map(s => ({ w: num(s.w), r: num(s.r) })) }));
@@ -87,7 +87,10 @@ function save() {
 // ───────── 운동 라이브러리
 const allEx = () => [...window.EXERCISES, ...db.custom];
 const exById = id => allEx().find(e => e.id === id) || { id, name: '알 수 없는 운동', group: '기타', equip: '', type: 'weight', inc: 2.5, range: [8, 12], custom: true };
-const unitR = ex => ex.type === 'time' ? '초' : '회';
+const unitR = ex => ex.type === 'time' ? '초' : ex.type === 'cardio' ? '분' : '회';
+// 볼륨(kg) 합산에 넣지 않는 기록 방식: 보조 머신(보조 kg), 유산소(km)
+const noVolume = ex => ex.type === 'assist' || ex.type === 'cardio';
+const LOAD_LBL = { barbell: '바벨', dumbbell: '덤벨 (한 손 기준)', machine: '핀 머신', plate: '플레이트 머신', smith: '스미스머신', cable: '케이블', bodyweight: '맨몸 (+추가중량)', kettlebell: '케틀벨', cardio: '유산소' };
 
 // ───────── 지표 계산
 const epley = (w, r) => r <= 1 ? w : w * (1 + r / 30);
@@ -97,6 +100,7 @@ function metrics(ex, sets) {
   const w = s => s.w || 0;
   const top = Math.max(...v.map(w));
   const topReps = Math.max(...v.filter(s => w(s) === top).map(s => s.r));
+  const low = Math.min(...v.map(w));
   return {
     sets: v.length,
     volume: v.reduce((a, s) => a + w(s) * s.r, 0),
@@ -104,10 +108,22 @@ function metrics(ex, sets) {
     e1rm: top > 0 ? Math.max(...v.map(s => epley(w(s), s.r))) : 0,
     totalReps: v.reduce((a, s) => a + s.r, 0),
     bestReps: Math.max(...v.map(s => s.r)),
+    dist: v.reduce((a, s) => a + w(s), 0),
+    low, lowReps: Math.max(...v.filter(s => w(s) === low).map(s => s.r)),
+    lessAssist: -low,
   };
 }
 // 종목별 표시 지표
 function metricDefs(ex, m) {
+  if (ex.type === 'cardio') {
+    const d = [{ k: 'totalReps', lbl: '총 시간', u: '분' }];
+    if (m && m.dist > 0) d.push({ k: 'dist', lbl: '거리', u: 'km' });
+    return d;
+  }
+  if (ex.type === 'assist') return [
+    { k: 'totalReps', lbl: '총 횟수', u: '회' },
+    { k: 'bestReps', lbl: '최고 횟수', u: '회' },
+    { k: 'low', lbl: '최저 보조', u: 'kg', inv: true }];
   if (ex.type === 'time') return [
     { k: 'bestReps', lbl: '최고 시간', u: '초' },
     { k: 'totalReps', lbl: '총 시간', u: '초' }];
@@ -123,7 +139,7 @@ function metricDefs(ex, m) {
     { k: 'e1rm', lbl: '예상 1RM', u: 'kg' }];
 }
 // 향상 여부 판단 기준 지표
-const keyMetrics = ex => ex.type === 'time' ? ['bestReps', 'totalReps'] : ex.type === 'bw' ? ['totalReps', 'bestReps', 'top'] : ['e1rm', 'volume'];
+const keyMetrics = ex => ex.type === 'time' ? ['bestReps', 'totalReps'] : ex.type === 'cardio' ? ['totalReps', 'dist'] : ex.type === 'assist' ? ['totalReps', 'bestReps', 'lessAssist'] : ex.type === 'bw' ? ['totalReps', 'bestReps', 'top'] : ['e1rm', 'volume'];
 
 function sessionsFor(exId) {
   const ex = exById(exId), out = [];
@@ -161,6 +177,17 @@ function nextTarget(ex, m) {
   const [lo, hi] = ex.range || [8, 12];
   const inc = ex.inc ?? 2.5;
   if (ex.type === 'time') return `${m.bestReps + 5}초 버티기 (+5초)`;
+  if (ex.type === 'cardio') {
+    if (m.totalReps >= hi) return `${fmt(m.totalReps)}분 유지 + 속도·경사·저항 조금 올리기${m.dist > 0 ? ` (거리 ${fmt(r1(m.dist + 0.2))}km 이상)` : ''}`;
+    return `${fmt(m.totalReps + 2)}분 (+2분)`;
+  }
+  if (ex.type === 'assist') {
+    if (m.lowReps >= hi && inc > 0) {
+      const nw = Math.max(0, m.low - inc);
+      return nw > 0 ? `보조 ${fmt(nw)}kg × ${lo}회 (보조 −${fmt(m.low - nw)}kg)` : `보조 없이 ${lo}회 도전 (보조 −${fmt(m.low)}kg)`;
+    }
+    return `보조 ${fmt(m.low)}kg × ${m.lowReps + 1}회 (+1회)`;
+  }
   if (ex.type === 'bw' && m.top === 0) {
     if (m.bestReps >= hi && inc > 0) return `추가 중량 ${inc}kg 달고 ${lo}회 (또는 ${m.bestReps + 1}회)`;
     return `${m.bestReps + 1}회 (+1회)`;
@@ -168,10 +195,11 @@ function nextTarget(ex, m) {
   if (m.topReps >= hi && inc > 0) return `${fmt(m.top + inc)}kg × ${lo}회 (무게 +${inc}kg)`;
   return `${fmt(m.top)}kg × ${m.topReps + 1}회 (+1회)`;
 }
-const setsText = (ex, sets) => sets.map(s => ex.type === 'weight' || (s.w || 0) > 0 ? `${fmt(s.w || 0)}×${s.r}` : `${s.r}${unitR(ex)}`).join(' · ');
+const setsText = (ex, sets) => sets.map(s => ex.type === 'cardio' ? `${s.r}분${(s.w || 0) > 0 ? ' ' + fmt(s.w) + 'km' : ''}` : ex.type === 'assist' ? `보조${fmt(s.w || 0)}×${s.r}` : ex.type === 'weight' || (s.w || 0) > 0 ? `${fmt(s.w || 0)}×${s.r}` : `${s.r}${unitR(ex)}`).join(' · ');
 
-function deltaHtml(d, u) {
+function deltaHtml(d, u, inv) {
   const v = r1(d);
+  if (inv && v !== 0) return `<span class="d ${v < 0 ? 'up' : 'down'}">${v < 0 ? '▼' : '▲'} ${v > 0 ? '+' : ''}${fmt(v)}${u}</span>`;
   if (v > 0) return `<span class="d up">▲ +${fmt(v)}${u}</span>`;
   if (v < 0) return `<span class="d down">▼ ${fmt(v)}${u}</span>`;
   return `<span class="d same">– 0${u}</span>`;
@@ -188,6 +216,26 @@ function message(ex, cur, prev) {
     if (p.length) return { cls: '', text: `지난번보다 ${p.join(', ')}, 잘했어요! 💪` };
     if (dv === 0 && dTop === 0 && dr === 0) return { cls: 'neutral', text: '지난번과 똑같아요. 다음엔 1회만 더 도전해 봐요!' };
     return { cls: 'down', text: `지난번보다 볼륨 ${sign(dv)}kg. 컨디션이 안 좋은 날도 있어요, 꾸준함이 최고예요 🙂` };
+  }
+  if (ex.type === 'assist') {
+    const dl = r1(prev.low - cur.low), dt = cur.totalReps - prev.totalReps, dr = cur.lowReps - prev.lowReps;
+    const p = [];
+    if (dl > 0) p.push(`보조 ${fmt(dl)}kg 줄임`);
+    if (dt > 0) p.push(`총 ${sign(dt)}회`);
+    if (dl === 0 && dr > 0) p.push(`같은 보조로 ${dr}회 더`);
+    if (p.length) return { cls: '', text: `지난번보다 ${p.join(', ')}, 잘했어요! 💪 (보조 kg이 낮을수록 더 어려워요)` };
+    if (dl === 0 && dt === 0) return { cls: 'neutral', text: '지난번과 똑같아요. 다음엔 1회만 더 도전해 봐요!' };
+    if (dl < 0 && dt <= 0) return { cls: 'down', text: `지난번보다 보조 ${fmt(-dl)}kg 늘었어요. 자세를 다지는 것도 과정이에요 🙂` };
+    return { cls: 'down', text: `지난번보다 총 ${sign(dt)}회. 컨디션 조절도 훈련이에요, 다음에 다시 올려봐요 🙂` };
+  }
+  if (ex.type === 'cardio') {
+    const dt = r1(cur.totalReps - prev.totalReps), dd = r1(cur.dist - prev.dist);
+    const p = [];
+    if (dt > 0) p.push(`${sign(dt)}분`);
+    if (dd > 0) p.push(`거리 ${sign(dd)}km`);
+    if (p.length) return { cls: '', text: `지난번보다 ${p.join(', ')}, 잘했어요! 🏃` };
+    if (dt === 0 && dd === 0) return { cls: 'neutral', text: '지난번과 똑같아요. 다음엔 2분만 더 하거나 강도를 살짝 올려 봐요!' };
+    return { cls: 'down', text: `지난번보다 ${sign(dt)}분. 짧게라도 꾸준히 하는 게 중요해요 🙂` };
   }
   const u = unitR(ex);
   const dt = cur.totalReps - prev.totalReps, db_ = cur.bestReps - prev.bestReps, dw = r1(cur.top - prev.top);
@@ -210,7 +258,7 @@ $('.sheet-backdrop').addEventListener('click', closeSheet);
 // ───────── 라우팅
 let curDate = todayStr();
 let histMode = 'date';
-let guideFilter = '전체', guideQuery = '';
+let guideFilter = '전체', guideQuery = '', guideEquip = '전체';
 let chartMetric = {};
 function go(h) { if (location.hash === h) route(); else location.hash = h; }
 window.addEventListener('hashchange', route);
@@ -257,23 +305,23 @@ function renderLog() {
 function renderDaySum() {
   const el = $('#daySum'); if (!el) return;
   const items = db.workouts[curDate] || [];
-  let sets = 0, vol = 0;
-  items.forEach(it => { const m = metrics(exById(it.exId), it.sets); if (m) { sets += m.sets; vol += m.volume; } });
+  let sets = 0, vol = 0, cmin = 0;
+  items.forEach(it => { const ex = exById(it.exId), m = metrics(ex, it.sets); if (m) { if (ex.type === 'cardio') cmin += m.totalReps; else sets += m.sets; if (!noVolume(ex)) vol += m.volume; } });
   el.innerHTML = items.length ? `<div class="stat-grid">
     <div class="stat"><b>${items.length}</b><span>종목</span></div>
     <div class="stat"><b>${sets}</b><span>세트</span></div>
-    <div class="stat"><b>${fmt(vol)}</b><span>총 볼륨(kg)</span></div></div>` : '';
+    <div class="stat"><b>${fmt(vol)}</b><span>총 볼륨(kg)</span></div></div>${cmin ? `<div class="muted small" style="margin:-4px 2px 10px">🏃 유산소 ${fmt(cmin)}분</div>` : ''}` : '';
 }
 function exCard(it, i) {
   const ex = exById(it.exId);
   const prev = prevSession(it.exId, curDate);
   const ph = k => prev && prev.sets[k] ? prev.sets[k] : (prev ? prev.sets[prev.sets.length - 1] : null);
-  const wLbl = ex.type === 'weight' ? 'kg' : '추가 kg';
+  const wLbl = ex.type === 'weight' ? 'kg' : ex.type === 'assist' ? '보조 kg' : ex.type === 'cardio' ? 'km' : '추가 kg';
   const rows = it.sets.map((s, k) => {
     const p = ph(k);
     return `<div class="set-row" data-k="${k}">
       <div class="set-no">${k + 1}</div>
-      <input inputmode="decimal" type="number" step="0.5" min="0" data-f="w" value="${s.w ?? ''}" placeholder="${p ? fmt(p.w || 0) : (ex.type === 'weight' ? 'kg' : '0')}" aria-label="${k + 1}세트 중량">
+      <input inputmode="decimal" type="number" step="${ex.type === 'cardio' ? '0.01' : '0.5'}" min="0" data-f="w" value="${s.w ?? ''}" placeholder="${p ? fmt(p.w || 0) : (ex.type === 'weight' || ex.type === 'assist' ? 'kg' : ex.type === 'cardio' ? '선택' : '0')}" aria-label="${k + 1}세트 ${wLbl}">
       <input inputmode="numeric" type="number" step="1" min="0" data-f="r" value="${s.r ?? ''}" placeholder="${p ? p.r : unitR(ex)}" aria-label="${k + 1}세트 ${unitR(ex)}">
       <button class="mini dup" data-act="dup" aria-label="세트 복사">복사</button>
       <button class="mini del" data-act="del" aria-label="세트 삭제">✕</button>
@@ -282,7 +330,7 @@ function exCard(it, i) {
   return `<section class="card ex-card" data-i="${i}" data-ex="${esc(it.exId)}">
     <div class="ex-head">
       <div><h2 class="ex-name"><button data-act="open">${esc(ex.name)} ›</button></h2>
-        <div style="margin-top:4px"><span class="tag">${esc(ex.group)}</span>${ex.equip ? `<span class="tag">${esc(ex.equip)}</span>` : ''}${ex.rec ? `<span class="tag">권장 ${esc(ex.rec.reps)}</span>` : ''}</div></div>
+        <div style="margin-top:4px"><span class="tag">${esc(ex.group)}</span>${ex.equip && ex.equip !== ex.group ? `<span class="tag">${esc(ex.equip)}</span>` : ''}${ex.rec ? `<span class="tag">권장 ${esc(ex.rec.reps)}</span>` : ''}</div></div>
       <button class="mini del" data-act="rmEx" aria-label="운동 삭제" style="width:44px">🗑</button>
     </div>
     ${it.sets.length ? `<div class="set-row hdr"><div style="text-align:center">세트</div><div style="text-align:center">${wLbl}</div><div style="text-align:center">${unitR(ex)}</div><div></div><div></div></div>` : ''}
@@ -307,8 +355,8 @@ function cmpHtml(it) {
     if (!cur) {
       h += `<div class="msg neutral">세트를 입력하면 지난번과 바로 비교해 드려요.</div>`;
     } else {
-      const defs = metricDefs(ex, cur.top > 0 || prev.m.top > 0 ? { top: 1 } : cur);
-      h += `<div class="metrics">${defs.map(d => `<div class="metric"><div class="lbl">${d.lbl}</div><div class="val">${fmt(cur[d.k])}${d.u}${deltaHtml(cur[d.k] - prev.m[d.k], d.u)}</div></div>`).join('')}</div>`;
+      const defs = metricDefs(ex, { top: Math.max(cur.top, prev.m.top), dist: Math.max(cur.dist || 0, prev.m.dist || 0) });
+      h += `<div class="metrics">${defs.map(d => `<div class="metric"><div class="lbl">${d.lbl}</div><div class="val">${fmt(cur[d.k])}${d.u}${deltaHtml(cur[d.k] - prev.m[d.k], d.u, d.inv)}</div></div>`).join('')}</div>`;
       const msg = message(ex, cur, prev.m);
       h += `<div class="msg ${msg.cls}">${msg.text}${isPR(it.exId, curDate, cur) ? '<span class="pr">🏆 PR</span>' : ''}</div>`;
       if (isPlateau(it.exId, curDate)) h += `<div class="plateau">⚠️ 최근 3번 동안 기록이 제자리예요. 무게를 10% 정도 낮춰(디로드) 횟수를 채운 뒤 다시 올리거나, 반복 범위를 바꿔 보세요. 수면·식사도 점검해 봐요.</div>`;
@@ -366,31 +414,54 @@ function recentIds() {
 function exListHtml(list, sub) {
   return list.map(ex => `<button class="list-item" data-id="${esc(ex.id)}"><div><div class="t">${esc(ex.name)}</div><div class="s">${sub(ex)}</div></div><span class="chev">›</span></button>`).join('') || '<div class="empty">찾는 운동이 없어요.</div>';
 }
-function filterEx(q, g) {
+// 검색 정규화: 공백 무시 + 소문자 + 흔한 오타(컨→컬)
+const exNorm = t => String(t || '').toLowerCase().replace(/\s+/g, '').replace(/컨/g, '컬');
+const exCat = e => (window.equipCat ? window.equipCat(e) : '기타');
+function filterEx(q, g = '전체', eq = '전체') {
   const rec = recentIds();
   let list = g === '최근' ? rec.map(exById).filter(e => !e.name.startsWith('알 수 없는')) : allEx();
   if (g !== '전체' && g !== '최근') list = list.filter(e => e.group === g);
-  if (q) { const s = q.toLowerCase().replace(/\s/g, ''); list = list.filter(e => (e.name + (e.en || '') + e.group + (e.primary || '')).toLowerCase().replace(/\s/g, '').includes(s)); }
+  if (eq && eq !== '전체') list = list.filter(e => exCat(e) === eq);
+  if (q) {
+    const s = exNorm(q);
+    const score = e => {
+      const n = exNorm(e.name), toks = String(e.aka || '').split(/\s+/).map(exNorm);
+      if (n === s || toks.includes(s)) return 0;
+      if (n.startsWith(s)) return 1;
+      if (n.includes(s)) return 2;
+      if (toks.some(t => t.startsWith(s))) return 3;
+      if (exNorm(e.aka).includes(s)) return 4;
+      return (exNorm(e.en) + exNorm(e.group) + exNorm(e.primary)).includes(s) ? 5 : 9;
+    };
+    list = list.map((e, i) => [score(e), i, e]).filter(x => x[0] < 9).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]);
+  }
   return list;
 }
+const equipChips = () => ['전체', ...(window.EQUIP_CATS || [])];
 function openPicker(onPick) {
-  let g = recentIds().length ? '최근' : '전체', q = '';
+  let g = recentIds().length ? '최근' : '전체', q = '', eq = '전체';
   const chips = ['최근', '전체', ...window.GROUPS, '기타'];
   openSheet(`<h2>운동 선택</h2>
-    <input class="search" id="pq" placeholder="운동 이름 검색 (예: 벤치)" autocomplete="off">
-    <div class="chips" id="pc"></div>
+    <input class="search" id="pq" placeholder="이름·별명 검색 (예: 팩트플라이, 아웃타이)" autocomplete="off">
+    <div class="chip-lbl">부위</div><div class="chips" id="pc"></div>
+    <div class="chip-lbl">장비</div><div class="chips" id="pe"></div>
+    <div class="muted small" id="pn" style="margin:0 2px 6px"></div>
     <div id="pl"></div>
     <button class="btn block" id="pcustom" style="margin-top:6px">✏️ 목록에 없는 운동 직접 추가</button>`, body => {
     const draw = () => {
       $('#pc', body).innerHTML = chips.map(c => `<button class="chip ${c === g ? 'on' : ''}" data-c="${c}">${c}</button>`).join('');
-      $('#pl', body).innerHTML = exListHtml(filterEx(q, g), ex => {
+      $('#pe', body).innerHTML = equipChips().map(c => `<button class="chip ${c === eq ? 'on' : ''}" data-e="${c}">${c}</button>`).join('');
+      const list = filterEx(q, g, eq);
+      $('#pn', body).textContent = `${list.length}개 운동${g !== '전체' || eq !== '전체' || q ? ` · ${[g !== '전체' ? g : '', eq !== '전체' ? eq : '', q ? `"${q}"` : ''].filter(Boolean).join(' · ')}` : ''}`;
+      $('#pl', body).innerHTML = exListHtml(list, ex => {
         const p = prevSession(ex.id, '9999-12-31');
-        return `${esc(ex.group)}${ex.equip ? ' · ' + esc(ex.equip) : ''}${p ? ` · 최근 ${shortD(p.date)} ${esc(setsText(ex, p.sets.slice(0, 1)))}` : ''}`;
+        return `${esc(ex.group)}${ex.equip && ex.equip !== ex.group ? ' · ' + esc(ex.equip) : ''}${p ? ` · 최근 ${shortD(p.date)} ${esc(setsText(ex, p.sets.slice(0, 1)))}` : ''}`;
       });
     };
     draw();
     $('#pq', body).addEventListener('input', e => { q = e.target.value.trim(); if (q && g === '최근') g = '전체'; draw(); });
     $('#pc', body).addEventListener('click', e => { const c = e.target.closest('[data-c]'); if (c) { g = c.dataset.c; draw(); } });
+    $('#pe', body).addEventListener('click', e => { const c = e.target.closest('[data-e]'); if (c) { eq = c.dataset.e; if (g === '최근') g = '전체'; draw(); } });
     $('#pl', body).addEventListener('click', e => { const b = e.target.closest('[data-id]'); if (b) onPick(b.dataset.id); });
     $('#pcustom', body).onclick = () => openCustomForm(onPick, q);
   });
@@ -400,14 +471,15 @@ function openCustomForm(onPick, name = '') {
     <div class="field"><label>운동 이름</label><input id="cn" value="${esc(name)}" placeholder="예: 스미스머신 스쿼트" maxlength="40"></div>
     <div class="field"><label>부위</label><select id="cg">${[...window.GROUPS, '기타'].map(g => `<option>${g}</option>`).join('')}</select></div>
     <div class="field"><label>기록 방식</label><select id="ct">
-      <option value="weight">중량 × 횟수 (kg)</option><option value="bw">맨몸 횟수 (+추가중량)</option><option value="time">시간 (초)</option></select></div>
+      <option value="weight">중량 × 횟수 (kg)</option><option value="bw">맨몸 횟수 (+추가중량)</option><option value="assist">보조 머신 (보조 kg × 횟수)</option><option value="time">시간 (초)</option><option value="cardio">유산소 (분 + 거리 km)</option></select></div>
     <div class="row"><button class="btn ghost" id="cc" style="flex:1">취소</button><button class="btn primary" id="cs" style="flex:2">추가하기</button></div>`, body => {
     $('#cc', body).onclick = closeSheet;
     $('#cs', body).onclick = () => {
       const n = $('#cn', body).value.trim();
       if (!n) return toast('운동 이름을 입력해 주세요');
       if (allEx().some(e => e.name === n)) return toast('같은 이름의 운동이 이미 있어요');
-      const ex = { id: 'c_' + Date.now().toString(36), name: n, group: $('#cg', body).value, equip: '직접 추가', type: $('#ct', body).value, inc: 2.5, range: [8, 12], custom: true };
+      const t = $('#ct', body).value;
+      const ex = { id: 'c_' + Date.now().toString(36), name: n, group: $('#cg', body).value, equip: '직접 추가', type: t, inc: t === 'cardio' ? 0 : 2.5, range: t === 'cardio' ? [20, 40] : [8, 12], custom: true };
       db.custom.push(ex); save(); toast('새 운동을 추가했어요');
       onPick(ex.id);
     };
@@ -433,7 +505,7 @@ function renderHistory() {
   if (histMode === 'date') {
     hl.innerHTML = allDates.map(d => {
       let sets = 0, vol = 0; const names = [];
-      (db.workouts[d] || []).forEach(it => { const ex = exById(it.exId); names.push(ex.name); const m = metrics(ex, it.sets); if (m) { sets += m.sets; vol += m.volume; } });
+      (db.workouts[d] || []).forEach(it => { const ex = exById(it.exId); names.push(ex.name); const m = metrics(ex, it.sets); if (m) { sets += m.sets; if (!noVolume(ex)) vol += m.volume; } });
       const t = dayTotals(d);
       return `<button class="list-item" data-d="${d}"><div><div class="t">${labelD(d)}</div>
         ${names.length ? `<div class="s">🏋️ ${esc(names.join(', '))}</div><div class="s">${sets}세트 · 볼륨 ${fmt(vol)}kg</div>` : ''}
@@ -445,7 +517,7 @@ function renderHistory() {
     const ids = recentIds().filter(id => sessionsFor(id).length);
     hl.innerHTML = exListHtml(ids.map(exById), ex => {
       const s = sessionsFor(ex.id), last = s[s.length - 1];
-      const best = ex.type === 'weight' ? `최고 ${fmt(Math.max(...s.map(x => x.m.top)))}kg` : `최고 ${Math.max(...s.map(x => x.m.bestReps))}${unitR(ex)}`;
+      const best = ex.type === 'weight' ? `최고 ${fmt(Math.max(...s.map(x => x.m.top)))}kg` : ex.type === 'assist' ? `최저 보조 ${fmt(Math.min(...s.map(x => x.m.low)))}kg` : ex.type === 'cardio' ? `최장 ${fmt(Math.max(...s.map(x => x.m.totalReps)))}분` : `최고 ${Math.max(...s.map(x => x.m.bestReps))}${unitR(ex)}`;
       return `${s.length}회 기록 · ${best} · 최근 ${shortD(last.date)}`;
     });
     hl.onclick = e => { const b = e.target.closest('[data-id]'); if (b) go('#/ex/' + encodeURIComponent(b.dataset.id) + '/records'); };
@@ -492,15 +564,17 @@ function renderExercise(id, sub) {
   }
   const opts = ex.type === 'weight' ? [['top', '최고 중량', 'kg'], ['volume', '볼륨', 'kg'], ['e1rm', '예상 1RM', 'kg']]
     : ex.type === 'time' ? [['bestReps', '최고 시간', '초'], ['totalReps', '총 시간', '초']]
+    : ex.type === 'cardio' ? [['totalReps', '시간', '분'], ['dist', '거리', 'km']]
+    : ex.type === 'assist' ? [['low', '최저 보조', 'kg'], ['totalReps', '총 횟수', '회'], ['bestReps', '최고 횟수', '회']]
     : [['totalReps', '총 횟수', '회'], ['bestReps', '최고 횟수', '회']];
   const mk = opts.find(o => o[0] === chartMetric[id]) ? chartMetric[id] : opts[0][0];
   const o = opts.find(o => o[0] === mk);
-  const bestOf = k => Math.max(...s.map(x => x.m[k]));
+  const bestOf = k => k === 'low' ? Math.min(...s.map(x => x.m[k])) : Math.max(...s.map(x => x.m[k]));
   const last = s[s.length - 1];
   const tgt = nextTarget(ex, last.m);
   body.innerHTML = `
     <div class="stat-grid">
-      ${opts.map(op => `<div class="stat"><b>${fmt(bestOf(op[0]))}</b><span>최고 ${op[1].replace('최고 ', '')}(${op[2]})</span></div>`).join('')}
+      ${opts.map(op => `<div class="stat"><b>${fmt(bestOf(op[0]))}</b><span>${op[0] === 'low' ? op[1] : '최고 ' + op[1].replace('최고 ', '')}(${op[2]})</span></div>`).join('')}
       ${opts.length < 3 ? `<div class="stat"><b>${s.length}</b><span>기록 횟수</span></div>` : ''}
     </div>
     <div class="seg" id="cm">${opts.map(op => `<button data-k="${op[0]}" class="${op[0] === mk ? 'on' : ''}">${op[1]}</button>`).join('')}</div>
@@ -519,6 +593,15 @@ function renderExercise(id, sub) {
   $('#cm').onclick = e => { const b = e.target.closest('[data-k]'); if (b) { chartMetric[id] = b.dataset.k; renderExercise(id, sub); } };
   body.querySelectorAll('.list-item[data-d]').forEach(b => b.onclick = () => { curDate = b.dataset.d; go('#/log'); });
 }
+const aliasList = ex => [...new Set(String(ex.aka || '').split(/\s+/).filter(t => t.length >= 2 && !exNorm(ex.name).includes(exNorm(t))))].slice(0, 8);
+function incText(ex) {
+  const [lo, hi] = ex.range || [8, 12], inc = ex.inc ?? 2.5, ld = LOAD_LBL[ex.load] ? `${LOAD_LBL[ex.load]} · ` : '';
+  if (ex.type === 'cardio') return `${ld}대화가 조금 힘든 정도(중강도)로 시작해요. 목표 ${hi}분을 채우면 시간 대신 속도·경사·저항을 조금씩 올려요.`;
+  if (ex.type === 'time') return `${ld}자세가 무너지기 직전까지 버텨요. 매번 5초씩 늘려요.`;
+  if (ex.type === 'assist') return `${ld}보조 kg이 낮을수록 어려워요. 모든 세트에서 ${hi}회를 채우면 보조를 ${fmt(inc)}kg 줄여요.`;
+  if (ex.type === 'bw') return `${ld}마지막 1~2회가 힘든 정도로 해요. ${hi}회를 넘기면 ${inc > 0 ? `${fmt(inc)}kg 추가 중량을 달거나 ` : ''}더 어려운 변형으로 바꿔요.`;
+  return `${ld}마지막 1~2회가 힘들지만 자세는 유지되는 무게가 적당해요. ${hi}회를 채우면 무게를 ${fmt(inc)}kg 올리고 ${lo}회부터 다시 쌓아요.`;
+}
 function guideHtml(ex) {
   const safety = `<div class="safety">⚠️ <b>안전 안내</b><br>운동 중 날카롭거나 찌르는 통증, 관절 통증, 저림이 느껴지면 즉시 멈추세요. 통증이 계속되면 의사나 물리치료사 등 전문가와 상담하세요. 처음 하는 동작은 가벼운 무게로 자세부터 익히고, 무거운 무게는 보조자나 안전바를 꼭 사용하세요.</div>`;
   if (!ex.steps) return `<div class="card"><p>직접 추가한 운동이라 운동 방법 가이드가 없어요.</p><p class="muted small">트레이너에게 자세를 확인받는 걸 추천해요.</p></div>${safety}
@@ -526,12 +609,13 @@ function guideHtml(ex) {
   return `<div class="guide">
     <div class="card">
       <div class="muted small">${esc(ex.en)} · ${esc(ex.group)} · ${esc(ex.equip)}</div>
+      ${ex.aka && aliasList(ex).length ? `<div class="muted small" style="margin-top:4px">🔎 이렇게도 불러요: ${esc(aliasList(ex).join(', '))}</div>` : ''}
       <h3 style="margin-top:10px">🎯 타깃 근육</h3>
       <div><b>주동근</b> ${esc(ex.primary)}</div>${ex.secondary ? `<div class="muted"><b>보조근</b> ${esc(ex.secondary)}</div>` : ''}
     </div>
     <div class="card"><h3 style="margin-top:0">📋 권장 세트/횟수</h3>
-      <div class="rec"><div><span class="muted small">세트</span><b>${esc(ex.rec.sets)}</b></div><div><span class="muted small">${ex.type === 'time' ? '시간' : '횟수'}</span><b>${esc(ex.rec.reps)}</b></div><div><span class="muted small">휴식</span><b>${esc(ex.rec.rest)}</b></div></div>
-      <p class="muted small" style="margin:8px 0 0">마지막 1~2회가 힘들지만 자세는 유지되는 무게가 적당해요. 권장 횟수 상한을 모든 세트에서 채우면 무게를 올려요.</p></div>
+      <div class="rec"><div><span class="muted small">세트</span><b>${esc(ex.rec.sets)}</b></div><div><span class="muted small">${ex.type === 'time' || ex.type === 'cardio' ? '시간' : '횟수'}</span><b>${esc(ex.rec.reps)}</b></div><div><span class="muted small">휴식</span><b>${esc(ex.rec.rest)}</b></div></div>
+      <p class="muted small" style="margin:8px 0 0">${incText(ex)}</p></div>
     <div class="card"><h3 style="margin-top:0">✅ 동작 순서</h3><ol>${ex.steps.map(t => `<li>${esc(t)}</li>`).join('')}</ol></div>
     <div class="card"><h3 style="margin-top:0">🚫 흔한 실수</h3><ul>${ex.mistakes.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>
     ${safety}
@@ -550,14 +634,20 @@ function bindGuide(ex) {
 function renderGuide() {
   setTitle('운동 방법');
   const chips = ['전체', ...window.GROUPS];
-  app.innerHTML = `<input class="search" id="gq" placeholder="운동 검색 (예: 스쿼트, 이두)" value="${esc(guideQuery)}" autocomplete="off"><div class="chips" id="gc"></div><div id="gl"></div>`;
+  app.innerHTML = `<input class="search" id="gq" placeholder="운동 검색 (예: 핵스쿼트, 펙덱, 이두)" value="${esc(guideQuery)}" autocomplete="off">
+    <div class="chip-lbl">부위</div><div class="chips" id="gc"></div><div class="chip-lbl">장비</div><div class="chips" id="ge"></div>
+    <div class="muted small" id="gn" style="margin:0 2px 6px"></div><div id="gl"></div>`;
   const draw = () => {
     $('#gc').innerHTML = chips.map(c => `<button class="chip ${c === guideFilter ? 'on' : ''}" data-c="${c}">${c}</button>`).join('');
-    $('#gl').innerHTML = exListHtml(filterEx(guideQuery, guideFilter), ex => `${esc(ex.group)} · ${esc(ex.primary || ex.equip || '')}`);
+    $('#ge').innerHTML = equipChips().map(c => `<button class="chip ${c === guideEquip ? 'on' : ''}" data-e="${c}">${c}</button>`).join('');
+    const list = filterEx(guideQuery, guideFilter, guideEquip);
+    $('#gn').textContent = `${list.length}개 운동`;
+    $('#gl').innerHTML = exListHtml(list, ex => [ex.group, ex.equip !== ex.group ? ex.equip : '', ex.primary].filter(Boolean).map(esc).join(' · '));
   };
   draw();
   $('#gq').addEventListener('input', e => { guideQuery = e.target.value.trim(); draw(); });
   $('#gc').onclick = e => { const c = e.target.closest('[data-c]'); if (c) { guideFilter = c.dataset.c; draw(); } };
+  $('#ge').onclick = e => { const c = e.target.closest('[data-e]'); if (c) { guideEquip = c.dataset.e; draw(); } };
   $('#gl').onclick = e => { const b = e.target.closest('[data-id]'); if (b) go('#/ex/' + encodeURIComponent(b.dataset.id) + '/guide'); };
 }
 
@@ -1179,7 +1269,7 @@ const MEAL_ALIAS = { 아침: '아침', 조식: '아침', breakfast: '아침', �
 const normName = s => String(s || '').replace(/\s/g, '').toLowerCase();
 function findExercise(name) {
   const n = normName(name);
-  return allEx().find(e => normName(e.name) === n || normName(e.en) === n || e.id === name) || null;
+  return allEx().find(e => normName(e.name) === n || normName(e.en) === n || e.id === name) || allEx().find(e => String(e.aka || '').split(/\s+/).some(t => t && normName(t) === n)) || null;
 }
 function parsePaste(text) {
   const res = { blocks: [], errors: [], warnings: [] };
@@ -1288,5 +1378,5 @@ route();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
-window.__fitlog = { get db() { return db; }, metrics, sessionsFor, isPlateau, nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods };
+window.__fitlog = { get db() { return db; }, metrics, sessionsFor, isPlateau, nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods, filterEx, exById, keyMetrics };
 })();
