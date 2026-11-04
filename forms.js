@@ -1203,9 +1203,10 @@ function musclesOf(txt) {
   return out;
 }
 function musclesFor(ex) {
+  const id = ex.base || ex.id;
   const p = musclesOf(ex.primary), s = musclesOf(ex.secondary).filter(k => !p.includes(k));
-  if (ex.id === 'abductor' || ex.id === 'cable_abduction' || ex.id === 'band_walk') { if (!p.includes('gluteMed')) p.unshift('gluteMed'); }
-  if (ex.id === 'adductor' && !p.includes('adductors')) p.unshift('adductors');
+  if (id === 'abductor' || id === 'cable_abduction' || id === 'band_walk') { if (!p.includes('gluteMed')) p.unshift('gluteMed'); }
+  if (id === 'adductor' && !p.includes('adductors')) p.unshift('adductors');
   return { p, s };
 }
 const FRONT_KEYS = ['chest', 'chestU', 'chestL', 'frontDelt', 'sideDelt', 'abs', 'obliques', 'hipFlexor', 'quads', 'adductors', 'biceps', 'forearm', 'upperTraps', 'calves', 'gluteMed'];
@@ -1273,5 +1274,7 @@ function start(root, ex) {
   if (btn) { btn.textContent = playing ? '⏸' : '▶'; btn.onclick = () => { playing = !playing; if (playing) t0 = performance.now() - last; btn.textContent = playing ? '⏸' : '▶'; }; }
   raf = requestAnimationFrame(tick);
 }
+// 브랜드 기구(brands.js)는 같은 동작의 기본 운동 그림을 그대로 써요
+for (const e of window.EXERCISES || []) if (e.base) { if (M[e.base] && !M[e.id]) M[e.id] = M[e.base]; if (TOP[e.base] && !TOP[e.id]) TOP[e.id] = TOP[e.base]; }
 window.FORMS = { topInset, patternFor, musclesFor, bodyMapSvg, guideFigureHtml, start, stop, MAP: M };
 })();

@@ -23,7 +23,7 @@ const MEALS = ['아침', '점심', '저녁', '간식'];
 const isObj = o => o && typeof o === 'object' && !Array.isArray(o);
 const isDate = k => /^\d{4}-\d{2}-\d{2}$/.test(k);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-function emptyDb() { return { version: 2, workouts: {}, custom: [], meals: {}, weights: {}, profile: {}, customFoods: [], favFoods: [], lastAmt: {}, meta: {} }; }
+function emptyDb() { return { version: 2, workouts: {}, custom: [], meals: {}, weights: {}, profile: {}, customFoods: [], favFoods: [], lastAmt: {}, meta: {}, routine: null }; }
 function validDb(d) {
   if (!isObj(d)) return false;
   if (d.workouts === undefined && d.meals === undefined && d.weights === undefined) return false;
@@ -70,6 +70,7 @@ function normalize(d) {
   out.lastAmt = {};
   for (const [k, v] of Object.entries(isObj(d.lastAmt) ? d.lastAmt : {})) if (isObj(v) && nz(v.g) > 0) out.lastAmt[k] = v.p != null ? { p: nz(v.p), n: nz(v.n) || 1, g: nz(v.g) } : { g: nz(v.g) };
   out.favFoods = (Array.isArray(d.favFoods) ? d.favFoods : []).filter(x => typeof x === 'string');
+  out.routine = normRoutine(d.routine);
   return out;
 }
 function num(v) { if (v === '' || v == null) return null; const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : null; }
@@ -307,7 +308,7 @@ $('.sheet-backdrop').addEventListener('click', closeSheet);
 // ───────── 라우팅
 let curDate = todayStr();
 let histMode = 'date';
-let guideFilter = '전체', guideQuery = '', guideEquip = '전체';
+let guideFilter = '전체', guideQuery = '', guideEquip = '전체', guideBrand = '전체';
 let chartMetric = {};
 function go(h) { if (location.hash === h) route(); else location.hash = h; }
 window.addEventListener('hashchange', route);
@@ -317,9 +318,9 @@ $('#backBtn').addEventListener('click', () => { if (history.length > 1) history.
 function route() {
   const parts = (location.hash || '#/log').slice(2).split('/');
   const tab = parts[0] || 'log';
-  const tabFor = tab === 'ex' ? (parts[2] === 'guide' ? 'guide' : 'history') : tab === 'weight' ? 'diet' : tab === 'evidence' ? 'settings' : tab;
+  const tabFor = tab === 'ex' ? (parts[2] === 'guide' ? 'guide' : 'history') : tab === 'weight' ? 'diet' : tab === 'evidence' ? 'settings' : tab === 'routine' ? 'log' : tab;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tabFor));
-  $('#backBtn').classList.toggle('hidden', tab !== 'ex' && tab !== 'weight' && tab !== 'evidence');
+  $('#backBtn').classList.toggle('hidden', tab !== 'ex' && tab !== 'weight' && tab !== 'evidence' && tab !== 'routine');
   window.scrollTo(0, 0);
   if (window.FORMS) window.FORMS.stop();
   if (tab === 'history') return renderHistory();
@@ -328,6 +329,7 @@ function route() {
   if (tab === 'guide') return renderGuide();
   if (tab === 'settings') return renderSettings();
   if (tab === 'evidence') return renderEvidence();
+  if (tab === 'routine') return renderRoutine(parts.slice(1).map(decodeURIComponent));
   if (tab === 'ex') return renderExercise(decodeURIComponent(parts[1] || ''), parts[2] || 'records');
   return renderLog();
 }
@@ -341,6 +343,7 @@ function renderLog() {
     ${dateBarHtml()}
     <div id="todayDiet"></div>
     <h3 class="sec-h">🏋️ 운동</h3>
+    ${routineTodayHtml()}
     <div id="daySum"></div>
     <div id="exList">${items.map((it, i) => exCard(it, i)).join('')}</div>
     ${items.length ? '' : `<div class="empty" style="padding:18px"><p style="margin:0">아직 운동 기록이 없어요. 아래 버튼으로 추가해 보세요!</p></div>`}
@@ -350,6 +353,7 @@ function renderLog() {
   $('#todayDiet').innerHTML = todayDietHtml();
   $('#todayDiet').onclick = e => { if (e.target.closest('[data-go]')) go(e.target.closest('[data-go]').dataset.go); };
   $('#addEx').onclick = () => openPicker(id => addExercise(id));
+  bindRoutineToday();
   bindCards();
 }
 function renderDaySum() {
@@ -372,7 +376,7 @@ function exCard(it, i) {
     return `<div class="set-row" data-k="${k}">
       <div class="set-no">${k + 1}</div>
       <input inputmode="decimal" type="number" step="${ex.type === 'cardio' ? '0.01' : '0.5'}" min="0" data-f="w" value="${s.w ?? ''}" placeholder="${p ? fmt(p.w || 0) : (ex.type === 'weight' || ex.type === 'assist' ? 'kg' : ex.type === 'cardio' ? '선택' : '0')}" aria-label="${k + 1}세트 ${wLbl}">
-      <input inputmode="numeric" type="number" step="1" min="0" data-f="r" value="${s.r ?? ''}" placeholder="${p ? p.r : unitR(ex)}" aria-label="${k + 1}세트 ${unitR(ex)}">
+      <input inputmode="numeric" type="number" step="1" min="0" data-f="r" value="${s.r ?? ''}" placeholder="${p ? (ex.type === 'weight' && s.w != null && p.w != null && s.w > p.w ? progRange(ex)[0] : p.r) : unitR(ex)}" aria-label="${k + 1}세트 ${unitR(ex)}">
       <button class="mini dup" data-act="dup" aria-label="세트 복사">복사</button>
       <button class="mini del" data-act="del" aria-label="세트 삭제">✕</button>
     </div>`;
@@ -398,12 +402,14 @@ function profStd() {
   if (!(p.sex === 'm' || p.sex === 'f') || !(bw > 0)) return null;
   return { sex: p.sex, age: +p.age || 0, bw };
 }
+// 브랜드 기구: 같은 종류 기구 표가 맞는 경우(pct)만 기본 운동 표를 써요
+const stdId = ex => ex.base ? (ex.pct ? ex.base : '') : ex.id;
 function pctValue(ex, m) {
-  if (!m || !window.STD || !window.STD.has(ex.id)) return null;
+  if (!m || !window.STD || !window.STD.has(stdId(ex))) return null;
   const pr = profStd(); if (!pr) return null;
-  if (ex.type === 'bw') { if (m.top > 0) return null; const r = window.STD.percentile(ex.id, m.bestReps, pr); return r && r.reps ? { ...r, basis: `${m.bestReps}회`, v: m.bestReps } : null; }
+  if (ex.type === 'bw') { if (m.top > 0) return null; const r = window.STD.percentile(stdId(ex), m.bestReps, pr); return r && r.reps ? { ...r, basis: `${m.bestReps}회`, v: m.bestReps } : null; }
   if (ex.type !== 'weight' || !(m.e1rm > 0)) return null;
-  const r = window.STD.percentile(ex.id, m.e1rm, pr);
+  const r = window.STD.percentile(stdId(ex), m.e1rm, pr);
   return r && !r.reps ? { ...r, basis: `예상 1RM ${fmt(r1(m.e1rm))}kg`, v: m.e1rm } : null;
 }
 function pctLine(ex, m) {
@@ -420,11 +426,11 @@ function levelBarSvg(r) {
 function pctCard(ex, m) {
   const r = pctValue(ex, m);
   if (!r) {
-    if (!window.STD || !window.STD.has(ex.id)) return '';
+    if (!window.STD || !window.STD.has(stdId(ex))) return '';
     if (!profStd()) return `<div class="card pct-card"><h3 style="margin:0 0 4px">📊 내 수준은?</h3><p class="muted small" style="margin:0">설정에서 <b>성별·체중·나이</b>를 입력하면 같은 조건 이용자 중 상위 몇 %인지 보여 드려요.</p></div>`;
     return '';
   }
-  const u = r.reps ? '회' : 'kg', ut = window.STD.untrained(ex.id, profStd());
+  const u = r.reps ? '회' : 'kg', ut = window.STD.untrained(stdId(ex), profStd());
   return `<div class="card pct-card"><h3 style="margin:0 0 2px">📊 내 수준 <span class="muted small">(추정)</span></h3>
     <div class="pct-big">상위 약 <b>${r.top}%</b> · ${r.level}</div>
     ${levelBarSvg(r)}
@@ -532,11 +538,19 @@ function exListHtml(list, sub) {
 // 검색 정규화: 공백 무시 + 소문자 + 흔한 오타(컨→컬)
 const exNorm = t => String(t || '').toLowerCase().replace(/\s+/g, '').replace(/컨/g, '컬');
 const exCat = e => (window.equipCat ? window.equipCat(e) : '기타');
-function filterEx(q, g = '전체', eq = '전체') {
+// 브랜드: '짐80' | '파나타' | '일반'(브랜드 없는 기본 운동) · 설정의 '내 헬스장 기구'는 목록 앞쪽으로
+const BRAND_CHIPS = ['전체', '짐80', '파나타', '일반'];
+const BRAND_KEY = { 짐80: 'gym80', 파나타: 'panatta' };
+const myBrands = () => (Array.isArray(db.profile.gymBrands) ? db.profile.gymBrands : []).filter(b => window.BRANDS && window.BRANDS[b]);
+const brandRank = e => { const m = myBrands(), i = m.indexOf(e.brand); return m.length ? (i >= 0 ? i : m.length) : (e.brand ? 1 : 0); };
+const brandTag = e => e.brand ? `<span class="tag brand ${e.brand}">${esc(window.BRANDS[e.brand])} · ${esc(e.seriesKo)}</span>` : '';
+function filterEx(q, g = '전체', eq = '전체', br = '전체') {
   const rec = recentIds();
   let list = g === '최근' ? rec.map(exById).filter(e => !e.name.startsWith('알 수 없는')) : allEx();
   if (g !== '전체' && g !== '최근') list = list.filter(e => e.group === g);
   if (eq && eq !== '전체') list = list.filter(e => exCat(e) === eq);
+  if (br && br !== '전체') list = list.filter(e => br === '일반' ? !e.brand : e.brand === BRAND_KEY[br]);
+  if (!q && g !== '최근' && myBrands().length) list = list.map((e, i) => [brandRank(e), i, e]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]);
   if (q) {
     const s = exNorm(q);
     const score = e => {
@@ -548,35 +562,38 @@ function filterEx(q, g = '전체', eq = '전체') {
       if (exNorm(e.aka).includes(s)) return 4;
       return (exNorm(e.en) + exNorm(e.group) + exNorm(e.primary)).includes(s) ? 5 : 9;
     };
-    list = list.map((e, i) => [score(e), i, e]).filter(x => x[0] < 9).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]);
+    list = list.map((e, i) => [score(e), i, e, brandRank(e)]).filter(x => x[0] < 9).sort((a, b) => a[0] - b[0] || a[3] - b[3] || a[1] - b[1]).map(x => x[2]);
   }
   return list;
 }
 const equipChips = () => ['전체', ...(window.EQUIP_CATS || [])];
 function openPicker(onPick) {
-  let g = recentIds().length ? '최근' : '전체', q = '', eq = '전체';
+  let g = recentIds().length ? '최근' : '전체', q = '', eq = '전체', br = '전체';
   const chips = ['최근', '전체', ...window.GROUPS, '기타'];
   openSheet(`<h2>운동 선택</h2>
     <input class="search" id="pq" placeholder="이름·별명 검색 (예: 팩트플라이, 아웃타이)" autocomplete="off">
     <div class="chip-lbl">부위</div><div class="chips" id="pc"></div>
     <div class="chip-lbl">장비</div><div class="chips" id="pe"></div>
+    <div class="chip-lbl">브랜드</div><div class="chips" id="pb"></div>
     <div class="muted small" id="pn" style="margin:0 2px 6px"></div>
     <div id="pl"></div>
     <button class="btn block" id="pcustom" style="margin-top:6px">✏️ 목록에 없는 운동 직접 추가</button>`, body => {
     const draw = () => {
       $('#pc', body).innerHTML = chips.map(c => `<button class="chip ${c === g ? 'on' : ''}" data-c="${c}">${c}</button>`).join('');
       $('#pe', body).innerHTML = equipChips().map(c => `<button class="chip ${c === eq ? 'on' : ''}" data-e="${c}">${c}</button>`).join('');
-      const list = filterEx(q, g, eq);
-      $('#pn', body).textContent = `${list.length}개 운동${g !== '전체' || eq !== '전체' || q ? ` · ${[g !== '전체' ? g : '', eq !== '전체' ? eq : '', q ? `"${q}"` : ''].filter(Boolean).join(' · ')}` : ''}`;
+      $('#pb', body).innerHTML = BRAND_CHIPS.map(c => `<button class="chip ${c === br ? 'on' : ''}" data-b="${c}">${c}</button>`).join('');
+      const list = filterEx(q, g, eq, br);
+      $('#pn', body).textContent = `${list.length}개 운동${g !== '전체' || eq !== '전체' || br !== '전체' || q ? ` · ${[g !== '전체' ? g : '', eq !== '전체' ? eq : '', br !== '전체' ? br : '', q ? `"${q}"` : ''].filter(Boolean).join(' · ')}` : ''}`;
       $('#pl', body).innerHTML = exListHtml(list, ex => {
         const p = prevSession(ex.id, '9999-12-31');
-        return `${esc(ex.group)}${ex.equip && ex.equip !== ex.group ? ' · ' + esc(ex.equip) : ''}${p ? ` · 최근 ${shortD(p.date)} ${esc(setsText(ex, p.sets.slice(0, 1)))}` : ''}`;
+        return `${brandTag(ex)}${esc(ex.group)}${ex.equip && ex.equip !== ex.group ? ' · ' + esc(ex.equip) : ''}${p ? ` · 최근 ${shortD(p.date)} ${esc(setsText(ex, p.sets.slice(0, 1)))}` : ''}`;
       });
     };
     draw();
     $('#pq', body).addEventListener('input', e => { q = e.target.value.trim(); if (q && g === '최근') g = '전체'; draw(); });
     $('#pc', body).addEventListener('click', e => { const c = e.target.closest('[data-c]'); if (c) { g = c.dataset.c; draw(); } });
     $('#pe', body).addEventListener('click', e => { const c = e.target.closest('[data-e]'); if (c) { eq = c.dataset.e; if (g === '최근') g = '전체'; draw(); } });
+    $('#pb', body).addEventListener('click', e => { const c = e.target.closest('[data-b]'); if (c) { br = c.dataset.b; if (g === '최근') g = '전체'; draw(); } });
     $('#pl', body).addEventListener('click', e => { const b = e.target.closest('[data-id]'); if (b) onPick(b.dataset.id); });
     $('#pcustom', body).onclick = () => openCustomForm(onPick, q);
   });
@@ -715,7 +732,7 @@ function renderExercise(id, sub) {
   $('#cm').onclick = e => { const b = e.target.closest('[data-k]'); if (b) { chartMetric[id] = b.dataset.k; renderExercise(id, sub); } };
   body.querySelectorAll('.list-item[data-d]').forEach(b => b.onclick = () => { curDate = b.dataset.d; go('#/log'); });
 }
-const aliasList = ex => [...new Set(String(ex.aka || '').split(/\s+/).filter(t => t.length >= 2 && !exNorm(ex.name).includes(exNorm(t))))].slice(0, 8);
+const aliasList = ex => [...new Set(String((ex.base ? exById(ex.base).aka : ex.aka) || '').split(/\s+/).filter(t => t.length >= 2 && !exNorm(ex.name).includes(exNorm(t))))].slice(0, 8);
 function incText(ex) {
   const [lo, hi] = progRange(ex), inc = minInc(ex), ld = LOAD_LBL[ex.load] ? `${LOAD_LBL[ex.load]} · ` : '';
   if (ex.type === 'cardio') return `${ld}대화가 조금 힘든 정도(중강도)로 시작해요. 목표 ${hi}분을 채우면 시간 대신 속도·경사·저항을 조금씩 올려요.`;
@@ -730,12 +747,13 @@ function guideHtml(ex) {
     ${db.custom.some(c => c.id === ex.id) ? '<button class="btn danger block" id="delCustom" style="margin-top:12px">이 운동 목록에서 삭제</button>' : ''}`;
   return `<div class="guide">
     <div class="card">
-      <div class="muted small">${esc(ex.en)} · ${esc(ex.group)} · ${esc(ex.equip)}</div>
-      ${ex.aka && aliasList(ex).length ? `<div class="muted small" style="margin-top:4px">🔎 이렇게도 불러요: ${esc(aliasList(ex).join(', '))}</div>` : ''}
+      <div class="muted small">${esc(ex.en)} · ${esc(ex.group)} · ${esc(ex.equip)}</div>${ex.brand ? `<div style="margin-top:6px">${brandTag(ex)}</div>` : ''}
+      ${aliasList(ex).length ? `<div class="muted small" style="margin-top:4px">🔎 이렇게도 불러요: ${esc(aliasList(ex).join(', '))}</div>` : ''}
       <h3 style="margin-top:10px">🎯 타깃 근육</h3>
       <div><b>주동근</b> ${esc(ex.primary)}</div>${ex.secondary ? `<div class="muted"><b>보조근</b> ${esc(ex.secondary)}</div>` : ''}
     </div>
     ${window.FORMS ? window.FORMS.guideFigureHtml(ex) : ''}
+    ${ex.brand ? brandCardHtml(ex) : ''}
     <div class="card"><h3 style="margin-top:0">📋 권장 세트/횟수</h3>
       <div class="rec"><div><span class="muted small">세트</span><b>${esc(ex.rec.sets)}</b></div><div><span class="muted small">${ex.type === 'time' || ex.type === 'cardio' ? '시간' : '횟수'}</span><b>${esc(recReps(ex))}</b></div><div><span class="muted small">휴식</span><b>${esc(ex.rec.rest)}</b></div></div>
       <p class="muted small" style="margin:8px 0 0">${incText(ex)}</p></div>
@@ -743,6 +761,14 @@ function guideHtml(ex) {
     <div class="card"><h3 style="margin-top:0">🚫 흔한 실수</h3><ul>${ex.mistakes.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>
     ${safety}
     <button class="btn primary block" id="addThis" style="margin-top:12px">오늘 기록에 추가</button></div>`;
+}
+function brandCardHtml(ex) {
+  const b = exById(ex.base);
+  return `<div class="card brand-card"><h3 style="margin-top:0">🏷️ 이 기구는</h3>
+    <p class="small" style="margin:0 0 6px"><b>${esc(window.BRANDS[ex.brand])} ${esc(ex.seriesKo)}</b> (${esc(ex.series)}) · 모델 <b>${esc(ex.model)}</b> <span class="muted">${esc(ex.code)}</span></p>
+    ${ex.note ? `<p class="small" style="margin:0 0 6px">✨ ${esc(ex.note)}</p>` : ''}
+    <p class="small" style="margin:0 0 6px">💡 ${esc(ex.generic)}</p>
+    <p class="small muted" style="margin:0">동작은 <a href="#/ex/${encodeURIComponent(b.id)}/guide">${esc(b.name)}</a>와 같아요. 처음엔 의자·패드 높이를 맞추고 가볍게 동작 범위부터 확인해 보세요. 출처: ${esc(ex.src)}</p></div>`;
 }
 function bindGuide(ex) {
   if (window.FORMS) window.FORMS.start(app, ex);
@@ -760,18 +786,21 @@ function renderGuide() {
   const chips = ['전체', ...window.GROUPS];
   app.innerHTML = `<input class="search" id="gq" placeholder="운동 검색 (예: 핵스쿼트, 펙덱, 이두)" value="${esc(guideQuery)}" autocomplete="off">
     <div class="chip-lbl">부위</div><div class="chips" id="gc"></div><div class="chip-lbl">장비</div><div class="chips" id="ge"></div>
+    <div class="chip-lbl">브랜드</div><div class="chips" id="gb"></div>
     <div class="muted small" id="gn" style="margin:0 2px 6px"></div><div id="gl"></div>`;
   const draw = () => {
     $('#gc').innerHTML = chips.map(c => `<button class="chip ${c === guideFilter ? 'on' : ''}" data-c="${c}">${c}</button>`).join('');
     $('#ge').innerHTML = equipChips().map(c => `<button class="chip ${c === guideEquip ? 'on' : ''}" data-e="${c}">${c}</button>`).join('');
-    const list = filterEx(guideQuery, guideFilter, guideEquip);
-    $('#gn').textContent = `${list.length}개 운동`;
-    $('#gl').innerHTML = exListHtml(list, ex => [ex.group, ex.equip !== ex.group ? ex.equip : '', ex.primary].filter(Boolean).map(esc).join(' · '));
+    $('#gb').innerHTML = BRAND_CHIPS.map(c => `<button class="chip ${c === guideBrand ? 'on' : ''}" data-b="${c}">${c}</button>`).join('');
+    const list = filterEx(guideQuery, guideFilter, guideEquip, guideBrand);
+    $('#gn').textContent = `${list.length}개 운동${myBrands().length ? ` · 내 헬스장 기구(${myBrands().map(b => window.BRANDS[b]).join('·')}) 먼저` : ''}`;
+    $('#gl').innerHTML = exListHtml(list, ex => brandTag(ex) + [ex.group, ex.equip !== ex.group ? ex.equip : '', ex.primary].filter(Boolean).map(esc).join(' · '));
   };
   draw();
   $('#gq').addEventListener('input', e => { guideQuery = e.target.value.trim(); draw(); });
   $('#gc').onclick = e => { const c = e.target.closest('[data-c]'); if (c) { guideFilter = c.dataset.c; draw(); } };
   $('#ge').onclick = e => { const c = e.target.closest('[data-e]'); if (c) { guideEquip = c.dataset.e; draw(); } };
+  $('#gb').onclick = e => { const c = e.target.closest('[data-b]'); if (c) { guideBrand = c.dataset.b; draw(); } };
   $('#gl').onclick = e => { const b = e.target.closest('[data-id]'); if (b) go('#/ex/' + encodeURIComponent(b.dataset.id) + '/guide'); };
 }
 
@@ -801,6 +830,7 @@ function renderSettings() {
   const n = Object.keys(db.workouts).length, nm = Object.keys(db.meals).length, nw = Object.keys(db.weights).length;
   const sets = Object.values(db.workouts).flat().reduce((a, it) => a + it.sets.filter(s => s.r > 0).length, 0);
   app.innerHTML = `${profileCardHtml()}
+    ${gymCardHtml()}
     <div class="card"><h3 style="margin:0 0 6px">💾 데이터 백업</h3>
       <p class="muted small" style="margin:0 0 10px">기록은 이 폰의 브라우저에만 저장돼요. 브라우저 데이터를 지우거나 폰을 바꾸면 사라질 수 있으니 가끔 백업해 주세요.<br>현재: 운동 ${n}일 · ${sets}세트 · 식단 ${nm}일 · 체중 ${nw}회${db.meta.lastBackup ? ` · 마지막 백업 ${labelD(db.meta.lastBackup)}` : ' · 아직 백업 안 함'}</p>
       <button class="btn primary block" id="exp">⬇️ 백업 파일 저장 (JSON)</button>
@@ -819,7 +849,7 @@ function renderSettings() {
       <p class="small" style="margin:0">아이폰: 사파리 하단 <b>공유</b> → <b>홈 화면에 추가</b><br>안드로이드: 크롬 메뉴(⋮) → <b>홈 화면에 추가</b> 또는 <b>앱 설치</b><br><span class="muted">한 번 열고 나면 인터넷 없이도 동작해요.</span></p></div>
     <button class="btn block" id="evBtn" style="margin-bottom:12px">📚 계산·음식 데이터 근거 (논문·출처)</button>
     <button class="btn danger block" id="wipe">전체 기록 삭제</button>
-    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v4 · 상우님 전용 💪</p>`;
+    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v7 · 상우님 전용 💪</p>`;
   $('#evBtn').onclick = () => go('#/evidence');
   const fname = () => `fitlog-backup-${todayStr()}.json`;
   const markBackup = () => { db.meta.lastBackup = todayStr(); save(); };
@@ -837,6 +867,7 @@ function renderSettings() {
   $('#coach').onclick = () => copy(coachText());
   $('#pasteImp').onclick = () => openPasteImport();
   bindProfile();
+  bindGymCard();
   let mode = 'merge';
   $('#impMerge').onclick = () => { mode = 'merge'; $('#impFile').click(); };
   $('#impReplace').onclick = () => { mode = 'replace'; $('#impFile').click(); };
@@ -862,6 +893,7 @@ function renderSettings() {
         for (const f of inc.customFoods) if (!db.customFoods.some(x => x.id === f.id)) db.customFoods.push(f);
         db.favFoods = [...new Set([...db.favFoods, ...inc.favFoods])];
         db.lastAmt = { ...inc.lastAmt, ...db.lastAmt };
+        if (!db.routine && inc.routine) db.routine = inc.routine;
       }
       save(); toast(`불러왔어요! (운동 ${Object.keys(inc.workouts).length}일 · 식단 ${Object.keys(inc.meals).length}일)`); renderSettings();
     } catch (err) { toast('백업 파일을 읽을 수 없어요. 핏로그 JSON 파일인지 확인해 주세요'); }
@@ -884,6 +916,8 @@ const REFS = [
   { k: 'rir', t: 'Helms ER, Cronin J, Storey A, Zourdos MC. Application of the repetitions in reserve-based rating of perceived exertion scale for resistance training. Strength Cond J. 2016;38(4):42–49.', doi: '10.1519/SSC.0000000000000218' },
   { k: 'zourdos', t: 'Zourdos MC, Klemp A, Dolan C, et al. Novel resistance training–specific rating of perceived exertion scale measuring repetitions in reserve. J Strength Cond Res. 2016;30(1):267–275.', doi: '10.1519/JSC.0000000000001049' },
   { k: 'deload', t: 'Bell L, Strafford BW, Coleman M, Androulakis Korakakis P, Nolan D. Integrating deloading into strength and physique sports training programmes: an international Delphi consensus approach. Sports Med Open. 2023;9:87.', doi: '10.1186/s40798-023-00633-0' },
+  { k: 'vol', t: 'Schoenfeld BJ, Ogborn D, Krieger JW. Dose-response relationship between weekly resistance training volume and increases in muscle mass: a systematic review and meta-analysis. J Sports Sci. 2017;35(11):1073–1082.', doi: '10.1080/02640414.2016.1210197' },
+  { k: 'freq', t: 'Schoenfeld BJ, Ogborn D, Krieger JW. Effects of resistance training frequency on measures of muscle hypertrophy: a systematic review and meta-analysis. Sports Med. 2016;46(11):1689–1697.', doi: '10.1007/s40279-016-0543-8' },
   { k: 'helms', t: 'Helms ER, Aragon AA, Fitschen PJ. Evidence-based recommendations for natural bodybuilding contest preparation: nutrition and supplementation. J Int Soc Sports Nutr. 2014;11:20.', doi: '10.1186/1550-2783-11-20' },
 ];
 const DATA_SRCS = [
@@ -921,6 +955,15 @@ function renderEvidence() {
       <p class="small"><b>비훈련자 참고값</b>: 벤치·스쿼트·데드리프트·오버헤드프레스는 <b>ExRx</b>의 성인 비훈련자(Untrained, 18~39세) 1RM 표와도 비교해 드려요. ExRx 스스로 이 표는 인구 통계(규준)가 아니라고 밝히고 있어서 <b>순위가 아닌 참고값</b>으로만 보여 줘요.</p>
       <p class="small"><a href="https://strengthlevel.com/strength-standards" target="_blank" rel="noopener">strengthlevel.com/strength-standards</a><br><a href="https://exrx.net/Testing/WeightLifting/StrengthStandards" target="_blank" rel="noopener">exrx.net/Testing/WeightLifting/StrengthStandards</a></p></div>
     <div class="card ev"><h3>🖼️ 자세 그림</h3><p class="small">자세 그림은 앱이 직접 그린 단순화한 그림이에요(인터넷 없이 동작). 관절 각도·움직임 경로는 일반적인 동작 설명을 바탕으로 했고, 사람마다 체형에 따라 바른 자세가 조금씩 달라요. 처음 하는 동작은 트레이너에게 확인받는 걸 추천해요.</p></div>
+    <div class="card ev"><h3>📋 추천 루틴은 어떻게 짰나요?</h3>
+      <p class="small"><b>주간 세트</b>: 주당 세트 수와 근육 증가의 관계를 본 메타분석에서, 세트가 많을수록 근육이 더 늘어나는 용량-반응 관계가 나타났고 근육마다 <b>주 10세트 이상</b>이 그보다 적은 경우보다 효과가 컸어요${ref('vol')}. 앱은 부위마다 <b>주 10~20세트</b>를 기본 범위로 써요 — 20세트 위쪽은 이 연구의 값이 아니라 회복을 고려한 일반적인 코칭 상한이에요.</p>
+      <p class="small"><b>빈도</b>: 같은 양을 기준으로 부위마다 <b>주 2번 이상</b> 훈련하는 쪽이 주 1번보다 근비대에 유리했어요${ref('freq')}. 그래서 3·4·5회 루틴 모두 큰 부위를 주 2번씩 넣었어요.</p>
+      <p class="small"><b>세트 세는 법</b>: 그 부위가 주동근이면 1세트, 보조근이면 0.5세트로 세요. 0.5는 널리 쓰이는 어림 규칙이고 정확한 값은 아니에요. 반복 범위·휴식은 위의 더블 프로그레션 규칙과 같아요(다관절 머신 1분 30초~2분, 고립 1~1분 30초).</p></div>
+    <div class="card ev"><h3>🏷️ 짐80·파나타 기구 목록 출처</h3>
+      <p class="small">모델명과 모델 번호는 아래 자료에 실린 것만 넣었어요. 헬스장마다 갖춘 기구·연식이 달라서 이름이 조금 다를 수 있어요. 동작 방법·자세 그림은 같은 동작의 기본 운동과 같고, 상위 %는 같은 종류 기구 표가 맞는 경우(주로 핀 머신, 레그프레스·핵스쿼트 등)만 보여 줘요.</p>
+      <p class="small"><b>gym80</b> 종합 브로슈어 2025 (Sygnum · Pure Kraft)<br><a href="https://gym80.ch/wp-content/uploads/2026/08/GESAMTBROSCHUeRE-WEB-2025-GESAMT.pdf" target="_blank" rel="noopener">gym80.ch 브로슈어 PDF</a> · <a href="https://www.gym80.de" target="_blank" rel="noopener">gym80.de</a></p>
+      <p class="small"><b>Panatta</b> 공식 사이트 Freeweight Special 목록, Freeweight HP 카탈로그, 공식 판매처 목록(Fit Evo · HP · Special 모델 번호)<br><a href="https://www.panattasport.com/en/free-weight-special/" target="_blank" rel="noopener">panattasport.com</a> · <a href="https://panattafitness.com/product-category/fit-evo/" target="_blank" rel="noopener">panattafitness.com</a></p>
+      <p class="small muted">브랜드 기구 ${(window.BRAND_EX || []).length}개 · 짐80 ${(window.BRAND_EX || []).filter(e => e.brand === 'gym80').length} · 파나타 ${(window.BRAND_EX || []).filter(e => e.brand === 'panatta').length}</p></div>
     <div class="card ev"><h3>🍱 음식 데이터 출처</h3>
       ${DATA_SRCS.map(s => `<p class="small"><b>${s[0]}</b><br>${s[1]}<br><a href="${s[2]}" target="_blank" rel="noopener">${s[2]}</a></p>`).join('')}
       <p class="small">모든 값은 100g(음료·국물은 100ml)당으로 저장해요. "한 줌", "1봉" 같은 분량은 제품 표시중량, 식약처 1인분 중량, 일반 계량 기준이고, <b>약</b>이 붙은 분량은 어림값이에요. 한 번 기록한 양은 다음에 같은 음식을 고를 때 그대로 기억해요.</p>
@@ -1513,10 +1556,194 @@ function openPasteImport() {
   });
 }
 
+// ───────── 루틴 (추천 템플릿 + 내 루틴 편집 + 오늘 시작)
+// 템플릿 칸: [후보 운동 id(앞쪽 우선), 세트 수]. '내 헬스장 기구'가 켜져 있으면 후보 중 그 브랜드 기구로 자동으로 바꿔요.
+const RT_TPL = [
+  { id: 'full3', name: '주 3회 전신', freq: 3, desc: '하루씩 쉬면서 (예: 월·수·금). 바쁜 주나 컨디션이 떨어질 때도 좋아요.', days: [
+    { name: '전신 A', items: [[['chest_press', 'machine_bench'], 4], [['lat_pulldown', 'iso_lat_pulldown'], 3], [['hack_squat', 'leg_press'], 4], [['seated_leg_curl', 'lying_leg_curl'], 4], [['machine_lateral'], 3], [['tri_ext_machine', 'triceps_pushdown'], 2]] },
+    { name: '전신 B', items: [[['incline_machine_press'], 3], [['machine_row', 'low_row', 'seated_row'], 3], [['leg_press', 'horizontal_leg_press'], 3], [['hip_thrust_machine'], 4], [['machine_lateral'], 2], [['machine_preacher'], 2], [['rear_delt'], 2]] },
+    { name: '전신 C', items: [[['machine_shoulder_press', 'hs_shoulder_press'], 3], [['high_row', 'lat_pulldown'], 3], [['pendulum_squat', 'hack_squat'], 3], [['lying_leg_curl', 'seated_leg_curl'], 3], [['pec_deck'], 3], [['seated_calf', 'calf_raise'], 3]] },
+  ] },
+  { id: 'ul4', name: '주 4회 상체/하체', freq: 4, desc: '상체·하체를 번갈아 (예: 월·화·목·금). 모든 부위를 주 2번씩 해요.', days: [
+    { name: '상체 A', items: [[['chest_press', 'machine_bench'], 3], [['lat_pulldown', 'iso_lat_pulldown'], 3], [['incline_machine_press'], 3], [['machine_row', 'low_row', 'seated_row'], 3], [['machine_lateral'], 4], [['tri_ext_machine', 'triceps_pushdown'], 2], [['machine_preacher'], 2]] },
+    { name: '하체 A', items: [[['hack_squat', 'leg_press'], 3], [['seated_leg_curl', 'lying_leg_curl'], 4], [['leg_ext'], 3], [['hip_thrust_machine'], 3], [['seated_calf', 'calf_raise'], 3]] },
+    { name: '상체 B', items: [[['machine_shoulder_press', 'hs_shoulder_press'], 3], [['high_row', 'iso_lat_pulldown'], 3], [['pec_deck'], 3], [['low_row', 'machine_row'], 3], [['rear_delt'], 3], [['machine_lateral'], 3], [['machine_dip', 'triceps_pushdown'], 2], [['machine_preacher', 'cable_curl'], 2]] },
+    { name: '하체 B', items: [[['pendulum_squat', 'leg_press'], 3], [['lying_leg_curl', 'seated_leg_curl'], 4], [['leg_press', 'horizontal_leg_press'], 3], [['abductor'], 2], [['adductor'], 2], [['calf_raise', 'seated_calf'], 4], [['ab_crunch_machine', 'cable_crunch'], 2]] },
+  ] },
+  { id: 'ppl5', name: '주 5회 상/하체 + 밀기/당기기/하체', freq: 5, desc: '상체·하체 다음 밀기·당기기·하체 (예: 월·화·수·금·토). 볼륨을 조금 더 넣고 싶을 때.', days: [
+    { name: '상체', items: [[['chest_press', 'machine_bench'], 3], [['lat_pulldown', 'iso_lat_pulldown'], 3], [['machine_shoulder_press', 'hs_shoulder_press'], 2], [['machine_row', 'low_row', 'seated_row'], 3], [['machine_lateral'], 2], [['machine_preacher'], 2], [['tri_ext_machine', 'triceps_pushdown'], 2]] },
+    { name: '하체 A', items: [[['hack_squat', 'leg_press'], 3], [['seated_leg_curl', 'lying_leg_curl'], 4], [['leg_ext'], 3], [['hip_thrust_machine'], 3], [['seated_calf', 'calf_raise'], 3]] },
+    { name: '밀기', items: [[['incline_machine_press'], 3], [['pec_deck'], 3], [['hs_shoulder_press', 'machine_shoulder_press'], 2], [['machine_lateral'], 4], [['machine_dip', 'triceps_pushdown'], 3]] },
+    { name: '당기기', items: [[['high_row', 'iso_lat_pulldown'], 3], [['iso_lat_pulldown', 'lat_pulldown'], 3], [['low_row', 'machine_row'], 3], [['rear_delt'], 3], [['machine_preacher', 'cable_curl'], 3]] },
+    { name: '하체 B', items: [[['pendulum_squat', 'leg_press'], 3], [['lying_leg_curl', 'seated_leg_curl'], 4], [['leg_press', 'horizontal_leg_press'], 3], [['abductor'], 3], [['calf_raise', 'seated_calf'], 4], [['ab_crunch_machine', 'cable_crunch'], 3]] },
+  ] },
+];
+const rtTpl = id => RT_TPL.find(t => t.id === id);
+function normRoutine(r) {
+  if (!isObj(r) || !Array.isArray(r.days)) return null;
+  const days = r.days.filter(d => isObj(d) && Array.isArray(d.items)).slice(0, 7).map(d => ({ name: String(d.name || '루틴').slice(0, 30),
+    items: d.items.filter(it => it && typeof it.exId === 'string').slice(0, 15).map(it => ({ exId: it.exId, sets: Math.max(1, Math.min(10, Math.round(+it.sets) || 3)) })) }));
+  if (!days.length) return null;
+  const log = {}; for (const [k, v] of Object.entries(isObj(r.log) ? r.log : {})) if (isDate(k) && Number.isInteger(v)) log[k] = v;
+  return { tpl: String(r.tpl || ''), days, next: Number.isInteger(r.next) && r.next >= 0 && r.next < days.length ? r.next : 0, log };
+}
+// 후보 중 내 헬스장 브랜드 기구가 있으면 그걸로 (후보 순서 우선 → 브랜드 순서)
+function pickSlot(cands, brands = myBrands()) {
+  for (const c of cands) for (const b of brands) { const e = (window.BRAND_EX || []).find(x => x.base === c && x.brand === b); if (e) return e.id; }
+  return cands[0];
+}
+const buildTpl = (t, brands) => t.days.map(d => ({ name: d.name, items: d.items.map(([c, n]) => ({ exId: pickSlot(c, brands), sets: n })) }));
+const restFor = ex => { const k = exKind(ex); return k === 'free' ? '2~3분' : k === 'machine' ? '1분 30초~2분' : k === 'iso' ? '1~1분 30초' : (ex.rec ? ex.rec.rest : '1~2분'); };
+const rtLine = (ex, n) => `${n}세트 × ${ex.type === 'weight' ? recReps(ex) : ex.rec ? ex.rec.reps : ''} · 휴식 ${restFor(ex)}`;
+// 주간 부위별 세트: 주동근 1세트, 보조근 0.5세트로 셈
+const MUSCLE_CATS = [['가슴', ['chest', 'chestU', 'chestL']], ['등', ['lats', 'rhomboids']], ['어깨 앞', ['frontDelt']], ['어깨 옆', ['sideDelt']], ['어깨 뒤', ['rearDelt']], ['이두', ['biceps']], ['삼두', ['triceps']], ['대퇴사두', ['quads']], ['햄스트링', ['hams']], ['둔근', ['glutes', 'gluteMed']], ['종아리', ['calves']], ['복근', ['abs', 'obliques']]];
+function weeklySets(days) {
+  const out = Object.fromEntries(MUSCLE_CATS.map(([n]) => [n, { d: 0, i: 0 }]));
+  for (const d of days) for (const it of d.items) {
+    const ex = exById(it.exId); if (!window.FORMS || ex.type === 'cardio') continue;
+    const { p, s } = window.FORMS.musclesFor(ex);
+    for (const [n, ks] of MUSCLE_CATS) { if (ks.some(k => p.includes(k))) out[n].d += it.sets; else if (ks.some(k => s.includes(k))) out[n].i += it.sets; }
+  }
+  return out;
+}
+function weeklyHtml(days) {
+  const w = weeklySets(days), MAX = 26, X = v => Math.min(100, v / MAX * 100);
+  const rows = MUSCLE_CATS.map(([n]) => {
+    const { d, i } = w[n], t = d + i / 2;
+    const st = t < 10 ? ['low', '적어요'] : t <= 20 ? ['ok', '좋아요'] : ['high', '많아요'];
+    return `<div class="wk-row"><span class="wk-n">${n}</span><div class="wk-bar"><i class="band" style="left:${X(10)}%;width:${X(20) - X(10)}%"></i><b style="width:${X(d)}%"></b><s style="left:${X(d)}%;width:${X(i / 2)}%"></s></div><span class="wk-v ${st[0]}">${fmt(t)} <em>${st[1]}</em></span></div>`;
+  }).join('');
+  return `<div class="card wk"><h3 style="margin:0 0 4px">📊 주간 부위별 세트</h3>
+    <p class="muted small" style="margin:0 0 8px">진한 막대 = 그 부위가 주동근인 세트, 연한 막대 = 보조로 쓰이는 세트(0.5세트로 셈). 초록 띠가 주 10~20세트 구간이에요.</p>${rows}
+    <p class="muted small" style="margin:8px 0 0">어깨 앞·삼두처럼 프레스에서 보조로 많이 쓰이는 부위는 따로 안 해도 괜찮아요. 처음엔 범위 아래쪽으로 시작해 회복이 잘 되면 세트를 늘려요. <a href="#/evidence">근거</a></p></div>`;
+}
+function dayCardHtml(d, di, edit) {
+  const sets = d.items.reduce((a, it) => a + it.sets, 0);
+  return `<section class="card rt-day" data-d="${di}"><div class="rt-dh"><h3>${di + 1}일차 · ${esc(d.name)}</h3><span class="muted small">${d.items.length}종목 · ${sets}세트</span></div>
+    ${d.items.map((it, k) => { const ex = exById(it.exId); return `<div class="rt-it" data-k="${k}">
+      <div class="rt-t"><a href="#/ex/${encodeURIComponent(ex.id)}/guide">${esc(ex.name)}</a><div class="s">${brandTag(ex)}${esc(rtLine(ex, it.sets))}</div></div>
+      ${edit ? `<div class="rt-ed"><button class="mini" data-act="minus" aria-label="세트 줄이기">−</button><button class="mini" data-act="plus" aria-label="세트 늘리기">＋</button><button class="mini" data-act="swap">바꾸기</button><button class="mini del" data-act="rm" aria-label="운동 빼기">✕</button></div>` : ''}</div>`; }).join('')}
+    ${edit ? `<button class="btn sm" data-act="addIt" style="margin-top:6px">＋ 운동 추가</button>` : ''}</section>`;
+}
+const RT_WHY = `<div class="card rt-why"><h3 style="margin:0 0 6px">🧭 이렇게 짰어요</h3><p class="small" style="margin:0">· 부위마다 <b>주 10~20세트</b> 정도 (주당 세트가 많을수록 근육이 더 늘어나는 경향, 10세트 이상이 그보다 적은 것보다 효과가 컸어요)<br>· 부위마다 <b>주 2번</b> (같은 양이면 주 1번보다 2번이 근비대에 유리했어요)<br>· 머신·케이블 위주, 세트마다 <b>여유 1~2회</b> 남기고 반복 범위 위쪽을 채우면 무게 한 칸 올려요<br>· 체중 관리(리컴프) 중이면 세트를 무리하게 늘리기보다 꾸준히 하는 게 우선이에요. <a href="#/evidence">근거</a></p></div>`;
+function renderRoutine(parts = []) {
+  const [mode, arg] = parts;
+  if (mode === 'tpl' && rtTpl(arg)) {
+    const t = rtTpl(arg), days = buildTpl(t);
+    setTitle(t.name);
+    app.innerHTML = `<div class="card"><p style="margin:0">${esc(t.desc)}</p>${myBrands().length ? `<p class="small muted" style="margin:6px 0 0">🏷️ 내 헬스장 기구(${myBrands().map(b => window.BRANDS[b]).join('·')})로 맞췄어요. 시작한 뒤 종목마다 바꿀 수 있어요.</p>` : `<p class="small muted" style="margin:6px 0 0">설정 → <b>내 헬스장 기구</b>에서 짐80·파나타를 고르면 그 기구로 바꿔 드려요.</p>`}</div>
+      ${weeklyHtml(days)}${days.map((d, i) => dayCardHtml(d, i, false)).join('')}
+      <button class="btn primary block" id="useTpl" style="min-height:54px">✅ 이 루틴으로 시작</button>`;
+    $('#useTpl').onclick = () => {
+      if (db.routine && !confirm('지금 루틴을 이 루틴으로 바꿀까요? (운동 기록은 그대로예요)')) return;
+      db.routine = { tpl: t.id, days, next: 0, log: {} }; save(); toast('루틴을 저장했어요! 오늘 탭에서 바로 시작할 수 있어요'); go('#/routine');
+    };
+    return;
+  }
+  if (mode === 'list' || !db.routine) {
+    setTitle('추천 루틴');
+    app.innerHTML = `${RT_WHY}${RT_TPL.map(t => { const days = buildTpl(t), w = weeklySets(days); const ok = MUSCLE_CATS.filter(([n]) => !['어깨 앞', '복근'].includes(n)).filter(([n]) => w[n].d + w[n].i / 2 >= 10).length;
+      return `<button class="list-item rt-tpl" data-t="${t.id}"><div><div class="t">${esc(t.name)} ${db.routine && db.routine.tpl === t.id ? '<span class="tag">사용 중</span>' : ''}</div><div class="s">${esc(t.desc)}</div><div class="s">${days.map(d => esc(d.name)).join(' · ')} · 주요 부위 ${ok}/10곳 주 10세트 이상</div></div><span class="chev">›</span></button>`; }).join('')}`;
+    app.querySelectorAll('[data-t]').forEach(b => b.onclick = () => go('#/routine/tpl/' + b.dataset.t));
+    return;
+  }
+  const r = db.routine, t = rtTpl(r.tpl);
+  setTitle('내 루틴');
+  app.innerHTML = `<div class="card"><div class="rt-dh"><h3 style="margin:0">${esc(t ? t.name : '내 루틴')}</h3><span class="tag">다음: ${esc(r.days[r.next].name)}</span></div>
+      <p class="muted small" style="margin:6px 0 0">종목마다 세트 −/＋, 바꾸기, 빼기를 할 수 있어요. 바꾸면 바로 저장돼요.</p></div>
+    ${weeklyHtml(r.days)}<div id="rtDays">${r.days.map((d, i) => dayCardHtml(d, i, true)).join('')}</div>
+    <div class="row" style="margin-bottom:10px"><button class="btn" id="rtList" style="flex:1">📚 다른 루틴 고르기</button>${t ? `<button class="btn" id="rtReset" style="flex:1">↺ 처음 구성으로</button>` : ''}</div>
+    <button class="btn danger block" id="rtDel">루틴 끄기</button>`;
+  $('#rtList').onclick = () => go('#/routine/list');
+  if ($('#rtReset')) $('#rtReset').onclick = () => { if (!confirm('바꾼 내용을 지우고 처음 구성(내 헬스장 기구 기준)으로 되돌릴까요?')) return; r.days = buildTpl(t); r.next = 0; save(); renderRoutine(); toast('처음 구성으로 되돌렸어요'); };
+  $('#rtDel').onclick = () => { if (!confirm('루틴을 끌까요? 운동 기록은 그대로 남아요.')) return; db.routine = null; save(); go('#/routine/list'); };
+  $('#rtDays').onclick = e => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const di = +b.closest('[data-d]').dataset.d, day = r.days[di], row = b.closest('[data-k]'), k = row ? +row.dataset.k : -1, act = b.dataset.act;
+    const done = () => { save(); renderRoutine(); };
+    if (act === 'minus') { day.items[k].sets = Math.max(1, day.items[k].sets - 1); return done(); }
+    if (act === 'plus') { day.items[k].sets = Math.min(10, day.items[k].sets + 1); return done(); }
+    if (act === 'rm') { if (day.items.length <= 1) return toast('하루에 최소 1종목은 있어야 해요'); day.items.splice(k, 1); toast('뺐어요'); return done(); }
+    if (act === 'addIt') return openPicker(id => { closeSheet(); if (day.items.some(x => x.exId === id)) return toast('이미 있는 운동이에요'); day.items.push({ exId: id, sets: 3 }); done(); });
+    if (act === 'swap') return openSwap(day.items[k].exId, id => { day.items[k].exId = id; closeSheet(); done(); toast('바꿨어요'); });
+  };
+}
+// 같은 동작(그림 패턴)·같은 부위 운동 → 내 헬스장 기구 먼저
+function swapCands(id) {
+  const ex = exById(id), M = (window.FORMS && window.FORMS.MAP) || {}, pat = M[id] ? M[id][0] : null, fam = ex.base || ex.id;
+  return allEx().filter(e => e.id !== id && e.type === ex.type && e.group === ex.group && ((e.base || e.id) === fam || (pat && M[e.id] && M[e.id][0] === pat)))
+    .map((e, i) => [brandRank(e), (e.base || e.id) === fam ? 0 : 1, i, e]).sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]).map(x => x[3]);
+}
+function openSwap(id, onPick) {
+  const ex = exById(id), list = swapCands(id);
+  openSheet(`<h2>바꾸기</h2><p class="muted small" style="margin:0 0 8px">지금: <b>${esc(ex.name)}</b><br>같은 동작·같은 부위 운동이에요${myBrands().length ? ' (내 헬스장 기구 먼저)' : ''}.</p>
+    <div id="swl">${exListHtml(list.slice(0, 40), e => brandTag(e) + esc([e.equip, e.primary].filter(Boolean).join(' · ')))}</div>
+    <button class="btn block" id="swAll" style="margin-top:6px">🔎 전체 목록에서 고르기</button>`, body => {
+    $('#swl', body).onclick = e => { const b = e.target.closest('[data-id]'); if (b) onPick(b.dataset.id); };
+    $('#swAll', body).onclick = () => openPicker(onPick);
+  });
+}
+// 오늘 탭: 루틴 카드
+function targetSets(ex, n, prev) {
+  const m = prev && prev.m;
+  let w = null;
+  if (m && ex.type === 'weight' && m.top > 0) { const [, hi] = progRange(ex), inc = minInc(ex), wk = m.work || [m.topReps]; w = wk.every(x => x >= hi) && inc > 0 ? r1(m.top + inc) : m.top; }
+  else if (prev && (ex.type === 'assist' || ex.type === 'bw' || ex.type === 'time' || ex.type === 'cardio')) w = prev.sets[0] ? prev.sets[0].w : null;
+  return Array.from({ length: n }, () => ({ w, r: null }));
+}
+function routineTodayHtml() {
+  const r = db.routine;
+  if (!r) return `<button class="list-item rt-cta" data-go="#/routine/list"><div><div class="t">📋 추천 루틴 보기</div><div class="s">주 3·4·5회 템플릿 · 짐80·파나타 기구로 맞춤</div></div><span class="chev">›</span></button>`;
+  const doneIdx = r.log[curDate], today = db.workouts[curDate] || [];
+  if (doneIdx != null && r.days[doneIdx]) {
+    const d = r.days[doneIdx], n = d.items.filter(it => today.some(x => x.exId === it.exId && x.sets.some(s => s.r > 0))).length;
+    return `<div class="card rt-today"><div class="rt-dh"><b>📋 오늘 루틴: ${esc(d.name)}</b><span class="muted small">${n}/${d.items.length} 종목 기록</span></div><div class="row" style="margin-top:8px"><button class="btn sm" data-go="#/routine" style="flex:1">루틴 보기</button></div></div>`;
+  }
+  const sel = rtSel != null && r.days[rtSel] ? rtSel : r.next, d = r.days[sel];
+  return `<div class="card rt-today"><div class="rt-dh"><b>📋 오늘 할 루틴</b><button class="mini" data-go="#/routine" style="width:auto;padding:0 10px">편집 ›</button></div>
+    <div class="chips" id="rtPick" style="margin-top:8px">${r.days.map((x, i) => `<button class="chip ${i === sel ? 'on' : ''}" data-di="${i}">${esc(x.name)}${i === r.next ? ' · 다음' : ''}</button>`).join('')}</div>
+    <div class="muted small" style="margin:0 2px 8px">${d.items.map(it => esc(exById(it.exId).name)).join(' · ')}</div>
+    <button class="btn primary block" id="rtStart" style="min-height:52px">▶ 오늘 루틴 시작 · ${esc(d.name)}</button>
+    <div class="muted small" style="margin:6px 2px 0">지난번 무게와 다음 목표(더블 프로그레션)로 미리 채워 드려요.</div></div>`;
+}
+let rtSel = null;
+function startRoutineDay(di) {
+  const r = db.routine, d = r.days[di], items = db.workouts[curDate] || (db.workouts[curDate] = []);
+  let added = 0;
+  for (const it of d.items) {
+    if (items.some(x => x.exId === it.exId)) continue;
+    const ex = exById(it.exId);
+    items.push({ exId: it.exId, sets: targetSets(ex, it.sets, prevSession(it.exId, curDate)) }); added++;
+  }
+  r.log[curDate] = di; r.next = (di + 1) % r.days.length; rtSel = null; save(); renderLog();
+  toast(added ? `${d.name} ${added}종목을 채웠어요. 횟수만 입력하세요!` : '이미 다 추가돼 있어요');
+}
+function bindRoutineToday() {
+  const p = $('#rtPick'); if (p) p.onclick = e => { const c = e.target.closest('[data-di]'); if (c) { rtSel = +c.dataset.di; renderLog(); } };
+  const s = $('#rtStart'); if (s) s.onclick = () => startRoutineDay(rtSel != null && db.routine.days[rtSel] ? rtSel : db.routine.next);
+  app.querySelectorAll('.rt-cta,.rt-today [data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
+}
+// 설정: 내 헬스장 기구
+function gymCardHtml() {
+  const m = myBrands(), c = b => (window.BRAND_EX || []).filter(e => e.brand === b).length;
+  return `<div class="card" id="gymCard"><h3 style="margin:0 0 6px">🏢 내 헬스장 기구</h3>
+    <p class="muted small" style="margin:0 0 10px">고른 브랜드 기구가 운동 목록 앞쪽에 나오고, 추천 루틴도 그 기구로 맞춰요. 둘 다 고르면 위쪽이 먼저예요.</p>
+    ${Object.entries(window.BRANDS || {}).map(([k, n]) => `<label class="chk"><input type="checkbox" data-brand="${k}" ${m.includes(k) ? 'checked' : ''}> <b>${n}</b> <span class="muted small">${k === 'gym80' ? 'gym80 · 퓨어크라프트·시그넘' : 'Panatta · 프리웨이트 HP/스페셜·핏에보'} · ${c(k)}개</span></label>`).join('')}</div>`;
+}
+function bindGymCard() {
+  const box = $('#gymCard'); if (!box) return;
+  box.onchange = e => {
+    const k = e.target.dataset.brand; if (!k) return;
+    const m = myBrands().filter(b => b !== k); if (e.target.checked) m.push(k);
+    if (m.length) db.profile.gymBrands = m; else delete db.profile.gymBrands;
+    save(); toast(m.length ? `${m.map(b => window.BRANDS[b]).join('·')} 기구를 먼저 보여 드려요` : '브랜드 우선 표시를 껐어요');
+  };
+}
+
 // ───────── 시작
 route();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
-window.__fitlog = { get db() { return db; }, metrics, sessionsFor, isPlateau, plateauInfo, progRange, minInc, pct: (id, m) => pctValue(exById(id), m), nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods, filterEx, exById, keyMetrics };
+window.__fitlog = { get db() { return db; }, metrics, sessionsFor, isPlateau, plateauInfo, progRange, minInc, pct: (id, m) => pctValue(exById(id), m), nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods, filterEx, exById, keyMetrics, weeklySets, buildTpl, RT_TPL, pickSlot, swapCands, targetSets, normRoutine, myBrands };
 })();
