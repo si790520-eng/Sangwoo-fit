@@ -111,6 +111,8 @@ function metrics(ex, sets) {
     dist: v.reduce((a, s) => a + w(s), 0),
     low, lowReps: Math.max(...v.filter(s => w(s) === low).map(s => s.r)),
     lessAssist: -low,
+    work: v.filter(s => w(s) === top).map(s => s.r), // 최고 무게(작업 세트)의 횟수들
+    workLow: v.filter(s => w(s) === low).map(s => s.r),
   };
 }
 // 종목별 표시 지표
@@ -155,15 +157,83 @@ function prevSession(exId, date) {
   const s = sessionsFor(exId).filter(x => x.date < date);
   return s.length ? s[s.length - 1] : null;
 }
-function isPlateau(exId, date) {
+// 정체: 예상 1RM·최고 중량(맨몸·시간 등은 주요 지표)이 마지막으로 오른 뒤 4번 이상 + 21일 이상 그대로일 때
+const DAY = 864e5;
+function plateauInfo(exId, date) {
   const ex = exById(exId);
   const s = sessionsFor(exId).filter(x => x.date <= date);
-  if (s.length < 4 || s[s.length - 1].date !== date) return false;
-  const win = s.slice(-3), before = s.slice(0, -3);
-  return keyMetrics(ex).every(k => {
-    const best = Math.max(...before.map(x => x.m[k]));
-    return win.every(x => x.m[k] <= best + 1e-9);
-  });
+  if (s.length < 5 || s[s.length - 1].date !== date) return null;
+  const keys = ex.type === 'weight' ? ['e1rm', 'top'] : keyMetrics(ex);
+  let lastImp = 0; const best = {};
+  keys.forEach(k => best[k] = s[0].m[k]);
+  for (let i = 1; i < s.length; i++) {
+    let up = false;
+    keys.forEach(k => { if (s[i].m[k] > best[k] + 1e-9) { best[k] = s[i].m[k]; up = true; } });
+    if (up) lastImp = i;
+  }
+  const n = s.length - 1 - lastImp, days = Math.round((parseD(date) - parseD(s[lastImp].date)) / DAY);
+  return n >= 4 && days >= 21 ? { n, days, since: s[lastImp].date } : null;
+}
+const isPlateau = (exId, date) => !!plateauInfo(exId, date);
+function plateauHtml(pi, ex) {
+  const wk = Math.max(3, Math.round(pi.days / 7));
+  return `<div class="plateau"><b>🌱 약 ${wk}주째 제자리예요 — 누구나 겪는 구간이에요</b>
+    <ol class="small" style="margin:6px 0 0;padding-left:18px">
+      <li>잠(7시간+)과 단백질(체중 1kg당 1.6g+), 식사량부터 점검해요</li>
+      <li>같은 ${ex.type === 'weight' ? '무게' : '강도'}로 2주 더 쌓아 봐요 — 대부분 여기서 다시 올라요</li>
+      <li>그래도 그대로면 1주만 <b>무게 10% 낮춰 가볍게</b>(디로드) 한 뒤 다시 시작해요</li></ol></div>`;
+}
+// 운동 종류(동작 패턴)로 반복 범위·최소 증량을 정해요 — 사용자 기록은 건드리지 않아요
+const COMPOUND = ['bench', 'chestpress', 'cablepress', 'dips', 'pushup', 'pike', 'hinge', 'pulldown', 'pullup', 'row', 'ohp', 'squat', 'hack', 'legpress', 'lunge', 'thrust'];
+const LOWER = ['squat', 'hack', 'legpress', 'lunge', 'thrust', 'hinge'];
+const patOf = ex => (window.FORMS && window.FORMS.MAP[ex.id] ? window.FORMS.MAP[ex.id][0] : null);
+function exKind(ex) {
+  const p = patOf(ex);
+  if (!p) return 'other';
+  if (!COMPOUND.includes(p)) return 'iso';
+  return ['machine', 'plate', 'cable'].includes(ex.load) ? 'machine' : 'free';
+}
+function progRange(ex) {
+  const r = ex.range || [8, 12];
+  if (ex.type !== 'weight' || ex.custom) return r;
+  const k = exKind(ex);
+  if (k === 'other') return r;
+  if (k === 'iso') return r[0] >= 12 ? r : [10, 15];
+  return k === 'machine' ? [8, 12] : [6, 10];
+}
+const MIN_INC = { barbell: 2.5, smith: 2.5, dumbbell: 2, machine: 5, plate: 5, cable: 2.5, kettlebell: 4 };
+function minInc(ex) {
+  const inc = ex.inc ?? 2.5;
+  if (ex.type !== 'weight' || !MIN_INC[ex.load]) return inc;
+  return inc > 0 ? Math.min(inc, MIN_INC[ex.load]) : MIN_INC[ex.load];
+}
+// 더블 프로그레션: 같은 무게로 모든 작업 세트가 범위 위쪽에 닿으면 → 최소 단위만 올리고 아래쪽부터 다시
+function nextTarget(ex, m) {
+  if (!m) return null;
+  const [lo, hi] = progRange(ex);
+  const inc = minInc(ex);
+  const repsTxt = a => a.join('/') + '회';
+  if (ex.type === 'time') return m.bestReps >= hi ? `${m.bestReps}초 유지 · 여유 있으면 +5초 또는 더 어려운 변형` : `${m.bestReps}초 유지 · 여유 있으면 +5초 (목표 ${hi}초)`;
+  if (ex.type === 'cardio') {
+    if (m.totalReps >= hi) return `${fmt(m.totalReps)}분 유지 + 속도·경사·저항 조금 올리기${m.dist > 0 ? ` (거리 ${fmt(r1(m.dist + 0.2))}km 이상)` : ''}`;
+    return `${fmt(m.totalReps + 2)}분 (+2분)`;
+  }
+  if (ex.type === 'assist') {
+    const w = m.workLow || [m.lowReps];
+    if (w.every(r => r >= hi) && inc > 0) {
+      const nw = Math.max(0, m.low - inc);
+      return nw > 0 ? `보조 ${fmt(nw)}kg × ${lo}회부터 (모든 세트 ${hi}회 달성! 보조 −${fmt(m.low - nw)}kg)` : `보조 없이 ${lo}회 도전 (보조 −${fmt(m.low)}kg)`;
+    }
+    return `보조 ${fmt(m.low)}kg 그대로 · 모든 세트 ${hi}회까지 (지금 ${repsTxt(w)})`;
+  }
+  if (ex.type === 'bw' && m.top === 0) {
+    if (m.bestReps >= hi) return inc > 0 ? `${hi}회 달성! 추가 중량 ${fmt(inc)}kg 달고 ${lo}회부터 (또는 더 어려운 변형)` : `${hi}회 달성! 더 어려운 변형으로 ${lo}회부터 (또는 천천히 내리기)`;
+    return `맨몸 그대로 · 세트마다 ${hi}회까지 조금씩 (지금 최고 ${m.bestReps}회)`;
+  }
+  const w = m.work || [m.topReps];
+  if (w.every(r => r >= hi) && inc > 0) return `${fmt(m.top + inc)}kg × ${lo}회부터 (모든 세트 ${hi}회 달성! +${fmt(inc)}kg)`;
+  if (Math.max(...w) < lo) return `${fmt(m.top)}kg 그대로 · 우선 ${lo}회 채우기 (무거우면 한 칸 내려도 좋아요)`;
+  return `${fmt(m.top)}kg 그대로 · 모든 세트 ${hi}회까지 (지금 ${repsTxt(w)})`;
 }
 function isPR(exId, date, m) {
   const ex = exById(exId);
@@ -172,29 +242,7 @@ function isPR(exId, date, m) {
   const k = keyMetrics(ex)[0];
   return m[k] > Math.max(...prev.map(x => x.m[k])) + 1e-9;
 }
-function nextTarget(ex, m) {
-  if (!m) return null;
-  const [lo, hi] = ex.range || [8, 12];
-  const inc = ex.inc ?? 2.5;
-  if (ex.type === 'time') return `${m.bestReps + 5}초 버티기 (+5초)`;
-  if (ex.type === 'cardio') {
-    if (m.totalReps >= hi) return `${fmt(m.totalReps)}분 유지 + 속도·경사·저항 조금 올리기${m.dist > 0 ? ` (거리 ${fmt(r1(m.dist + 0.2))}km 이상)` : ''}`;
-    return `${fmt(m.totalReps + 2)}분 (+2분)`;
-  }
-  if (ex.type === 'assist') {
-    if (m.lowReps >= hi && inc > 0) {
-      const nw = Math.max(0, m.low - inc);
-      return nw > 0 ? `보조 ${fmt(nw)}kg × ${lo}회 (보조 −${fmt(m.low - nw)}kg)` : `보조 없이 ${lo}회 도전 (보조 −${fmt(m.low)}kg)`;
-    }
-    return `보조 ${fmt(m.low)}kg × ${m.lowReps + 1}회 (+1회)`;
-  }
-  if (ex.type === 'bw' && m.top === 0) {
-    if (m.bestReps >= hi && inc > 0) return `추가 중량 ${inc}kg 달고 ${lo}회 (또는 ${m.bestReps + 1}회)`;
-    return `${m.bestReps + 1}회 (+1회)`;
-  }
-  if (m.topReps >= hi && inc > 0) return `${fmt(m.top + inc)}kg × ${lo}회 (무게 +${inc}kg)`;
-  return `${fmt(m.top)}kg × ${m.topReps + 1}회 (+1회)`;
-}
+const recReps = ex => ex.type === 'weight' && ex.rec ? `${progRange(ex)[0]}~${progRange(ex)[1]}회` : ex.rec ? ex.rec.reps : '';
 const setsText = (ex, sets) => sets.map(s => ex.type === 'cardio' ? `${s.r}분${(s.w || 0) > 0 ? ' ' + fmt(s.w) + 'km' : ''}` : ex.type === 'assist' ? `보조${fmt(s.w || 0)}×${s.r}` : ex.type === 'weight' || (s.w || 0) > 0 ? `${fmt(s.w || 0)}×${s.r}` : `${s.r}${unitR(ex)}`).join(' · ');
 
 function deltaHtml(d, u, inv) {
@@ -214,8 +262,9 @@ function message(ex, cur, prev) {
     if (dTop === 0 && dr > 0) p.push(`같은 무게로 ${dr}회 더`);
     if (!p.length && de > 0) p.push(`예상 1RM ${sign(de)}kg`);
     if (p.length) return { cls: '', text: `지난번보다 ${p.join(', ')}, 잘했어요! 💪` };
-    if (dv === 0 && dTop === 0 && dr === 0) return { cls: 'neutral', text: '지난번과 똑같아요. 다음엔 1회만 더 도전해 봐요!' };
-    return { cls: 'down', text: `지난번보다 볼륨 ${sign(dv)}kg. 컨디션이 안 좋은 날도 있어요, 꾸준함이 최고예요 🙂` };
+    if (dv === 0 && dTop === 0 && dr === 0) return { cls: 'neutral', text: '지난번과 같아요 👍 같은 무게를 다시 해낸 것도 좋은 결과예요. 여유 있는 세트가 있으면 다음엔 1회만 더 해 봐요.' };
+    if (dTop < 0) return { cls: 'neutral', text: '오늘은 무게를 낮췄어요. 자세를 다지거나 컨디션을 조절하는 날도 필요해요 🙂' };
+    return { cls: 'down', text: `지난번보다 볼륨 ${sign(dv)}kg. 잠·컨디션에 따라 기록은 오르내려요, 꾸준함이 최고예요 🙂` };
   }
   if (ex.type === 'assist') {
     const dl = r1(prev.low - cur.low), dt = cur.totalReps - prev.totalReps, dr = cur.lowReps - prev.lowReps;
@@ -224,7 +273,7 @@ function message(ex, cur, prev) {
     if (dt > 0) p.push(`총 ${sign(dt)}회`);
     if (dl === 0 && dr > 0) p.push(`같은 보조로 ${dr}회 더`);
     if (p.length) return { cls: '', text: `지난번보다 ${p.join(', ')}, 잘했어요! 💪 (보조 kg이 낮을수록 더 어려워요)` };
-    if (dl === 0 && dt === 0) return { cls: 'neutral', text: '지난번과 똑같아요. 다음엔 1회만 더 도전해 봐요!' };
+    if (dl === 0 && dt === 0) return { cls: 'neutral', text: '지난번과 같아요 👍 그대로 해낸 것도 좋은 결과예요. 여유 있으면 다음엔 1회만 더 해 봐요.' };
     if (dl < 0 && dt <= 0) return { cls: 'down', text: `지난번보다 보조 ${fmt(-dl)}kg 늘었어요. 자세를 다지는 것도 과정이에요 🙂` };
     return { cls: 'down', text: `지난번보다 총 ${sign(dt)}회. 컨디션 조절도 훈련이에요, 다음에 다시 올려봐요 🙂` };
   }
@@ -234,7 +283,7 @@ function message(ex, cur, prev) {
     if (dt > 0) p.push(`${sign(dt)}분`);
     if (dd > 0) p.push(`거리 ${sign(dd)}km`);
     if (p.length) return { cls: '', text: `지난번보다 ${p.join(', ')}, 잘했어요! 🏃` };
-    if (dt === 0 && dd === 0) return { cls: 'neutral', text: '지난번과 똑같아요. 다음엔 2분만 더 하거나 강도를 살짝 올려 봐요!' };
+    if (dt === 0 && dd === 0) return { cls: 'neutral', text: '지난번과 같아요 👍 꾸준히 해낸 게 중요해요. 여유 있으면 2분만 더 하거나 강도를 살짝 올려 봐요.' };
     return { cls: 'down', text: `지난번보다 ${sign(dt)}분. 짧게라도 꾸준히 하는 게 중요해요 🙂` };
   }
   const u = unitR(ex);
@@ -244,7 +293,7 @@ function message(ex, cur, prev) {
   if (dt > 0) p.push(`총 ${sign(dt)}${u}`);
   if (db_ > 0) p.push(`최고 ${sign(db_)}${u}`);
   if (p.length) return { cls: '', text: `지난번보다 ${p.join(', ')}, 잘했어요! 💪` };
-  if (dt === 0 && db_ === 0 && dw === 0) return { cls: 'neutral', text: `지난번과 똑같아요. 다음엔 ${ex.type === 'time' ? '5초' : '1회'}만 더 도전해 봐요!` };
+  if (dt === 0 && db_ === 0 && dw === 0) return { cls: 'neutral', text: `지난번과 같아요 👍 그대로 해낸 것도 좋은 결과예요. 여유 있으면 다음엔 ${ex.type === 'time' ? '5초' : '1회'}만 더 해 봐요.` };
   return { cls: 'down', text: `지난번보다 총 ${sign(dt)}${u}. 컨디션 조절도 훈련이에요, 다음에 다시 올려봐요 🙂` };
 }
 
@@ -272,6 +321,7 @@ function route() {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tabFor));
   $('#backBtn').classList.toggle('hidden', tab !== 'ex' && tab !== 'weight' && tab !== 'evidence');
   window.scrollTo(0, 0);
+  if (window.FORMS) window.FORMS.stop();
   if (tab === 'history') return renderHistory();
   if (tab === 'diet') return renderDiet();
   if (tab === 'weight') return renderWeightPage();
@@ -330,7 +380,7 @@ function exCard(it, i) {
   return `<section class="card ex-card" data-i="${i}" data-ex="${esc(it.exId)}">
     <div class="ex-head">
       <div><h2 class="ex-name"><button data-act="open">${esc(ex.name)} ›</button></h2>
-        <div style="margin-top:4px"><span class="tag">${esc(ex.group)}</span>${ex.equip && ex.equip !== ex.group ? `<span class="tag">${esc(ex.equip)}</span>` : ''}${ex.rec ? `<span class="tag">권장 ${esc(ex.rec.reps)}</span>` : ''}</div></div>
+        <div style="margin-top:4px"><span class="tag">${esc(ex.group)}</span>${ex.equip && ex.equip !== ex.group ? `<span class="tag">${esc(ex.equip)}</span>` : ''}${ex.rec ? `<span class="tag">권장 ${esc(recReps(ex))}</span>` : ''}</div></div>
       <button class="mini del" data-act="rmEx" aria-label="운동 삭제" style="width:44px">🗑</button>
     </div>
     ${it.sets.length ? `<div class="set-row hdr"><div style="text-align:center">세트</div><div style="text-align:center">${wLbl}</div><div style="text-align:center">${unitR(ex)}</div><div></div><div></div></div>` : ''}
@@ -341,6 +391,69 @@ function exCard(it, i) {
     </div>
     <div class="cmp" id="cmp-${i}">${cmpHtml(it)}</div>
   </section>`;
+}
+// ───────── 상위 % (Strength Level 기준 추정) + 이번 달 기대치
+function profStd() {
+  const p = db.profile || {}, bw = latestWeight() || +p.weight;
+  if (!(p.sex === 'm' || p.sex === 'f') || !(bw > 0)) return null;
+  return { sex: p.sex, age: +p.age || 0, bw };
+}
+function pctValue(ex, m) {
+  if (!m || !window.STD || !window.STD.has(ex.id)) return null;
+  const pr = profStd(); if (!pr) return null;
+  if (ex.type === 'bw') { if (m.top > 0) return null; const r = window.STD.percentile(ex.id, m.bestReps, pr); return r && r.reps ? { ...r, basis: `${m.bestReps}회`, v: m.bestReps } : null; }
+  if (ex.type !== 'weight' || !(m.e1rm > 0)) return null;
+  const r = window.STD.percentile(ex.id, m.e1rm, pr);
+  return r && !r.reps ? { ...r, basis: `예상 1RM ${fmt(r1(m.e1rm))}kg`, v: m.e1rm } : null;
+}
+function pctLine(ex, m) {
+  const r = pctValue(ex, m); if (!r) return '';
+  return `<div class="pct">📊 같은 성별·체중·나이 이용자 중 <b>상위 약 ${r.top}%</b> · ${r.level} <span class="muted small">(${esc(r.basis)} 기준 · <a href="#/evidence">추정 근거</a>)</span></div>`;
+}
+function levelBarSvg(r) {
+  const LV = window.STD.LV, xs = [0, 5, 20, 50, 80, 95, 100], W = 320, X = b => 8 + (W - 16) * b / 100;
+  const cols = ['#3a414f', '#475569', '#2f855a', '#38a169', '#4ade80', '#a3e635'];
+  const seg = LV.map((l, i) => `<rect x="${X(xs[i]).toFixed(1)}" y="18" width="${(X(xs[i + 1]) - X(xs[i]) - 1.5).toFixed(1)}" height="12" rx="3" fill="${cols[i]}"/>${i ? `<text x="${X((xs[i] + xs[i + 1]) / 2).toFixed(1)}" y="46" font-size="10" text-anchor="middle" fill="#9aa3b2">${l}</text>` : ''}`).join('');
+  const mx = X(Math.max(1, Math.min(99, r.beats)));
+  return `<svg viewBox="0 0 ${W} 52" class="lvbar" role="img" aria-label="수준 ${r.level}, 상위 ${r.top}%">${seg}<path d="M${mx.toFixed(1)} 16 l-6 -9 h12z" fill="#fbbf24"/><text x="${Math.min(W - 30, Math.max(30, mx)).toFixed(1)}" y="7" font-size="10" text-anchor="middle" fill="#fbbf24" font-weight="700">나</text></svg>`;
+}
+function pctCard(ex, m) {
+  const r = pctValue(ex, m);
+  if (!r) {
+    if (!window.STD || !window.STD.has(ex.id)) return '';
+    if (!profStd()) return `<div class="card pct-card"><h3 style="margin:0 0 4px">📊 내 수준은?</h3><p class="muted small" style="margin:0">설정에서 <b>성별·체중·나이</b>를 입력하면 같은 조건 이용자 중 상위 몇 %인지 보여 드려요.</p></div>`;
+    return '';
+  }
+  const u = r.reps ? '회' : 'kg', ut = window.STD.untrained(ex.id, profStd());
+  return `<div class="card pct-card"><h3 style="margin:0 0 2px">📊 내 수준 <span class="muted small">(추정)</span></h3>
+    <div class="pct-big">상위 약 <b>${r.top}%</b> · ${r.level}</div>
+    ${levelBarSvg(r)}
+    <p class="small" style="margin:6px 0 0">${esc(r.basis)} 기준${r.next ? ` · 다음 단계(${r.next.level})까지 <b>${fmt(r1(Math.max(0, r.next.at - r.v)))}${u}</b>` : ''}</p>
+    ${ut ? `<p class="small muted" style="margin:6px 0 0">참고: 운동을 막 배우는 비훈련자(ExRx 표, ${ut.cls}kg급 성인)의 1RM은 약 ${fmt(ut.kg)}kg이에요 — 내 예상 1RM은 그 <b>${fmt(r1(r.v / ut.kg))}배</b>. (순위가 아닌 참고값)</p>` : ''}
+    <p class="small muted" style="margin:6px 0 0">헬스장/앱 이용자 기록 기준 추정 (Strength Level). 운동을 안 하는 사람까지 포함한 일반인 기준이라면 순위는 이보다 더 높아요. <a href="#/evidence">근거</a></p></div>`;
+}
+const STAGES = { 0: '초보', 1: '초중급', 2: '중급 이상' };
+function monthlyLine(ex, date) {
+  if (ex.type !== 'weight') return '';
+  const s = sessionsFor(ex.id).filter(x => x.date <= date); if (!s.length) return '';
+  const last = s[s.length - 1], k = exKind(ex);
+  if (k === 'other') return '';
+  const r = pctValue(ex, last.m);
+  const spanD = (parseD(last.date) - parseD(s[0].date)) / DAY;
+  const st = r ? (r.lv <= 1 ? 0 : r.lv === 2 ? 1 : 2) : (spanD < 180 ? 0 : spanD < 540 ? 1 : 2);
+  let exp, lo, hi;
+  if (k === 'iso') exp = '한 달에 1~2회 더 또는 무게 한 칸';
+  else {
+    const T = LOWER.includes(patOf(ex)) ? [[2.5, 5], [1, 2.5], [0.5, 1]] : [[1, 2.5], [0.5, 1.5], [0, 1]];
+    [lo, hi] = T[st]; exp = `예상 1RM 한 달 +${fmt(lo)}~${fmt(hi)}kg`;
+  }
+  const ago = s.filter(x => x.date <= addDays(last.date, -24)).pop();
+  let act = '';
+  if (ago && k !== 'iso') {
+    const d = r1(last.m.e1rm - ago.m.e1rm);
+    act = ` · 최근 한 달 <b>${d > 0 ? '+' : ''}${fmt(d)}kg</b> ${d > hi ? '— 기대보다 빨라요 🎉' : d >= lo ? '— 딱 기대 범위예요 👍' : '— 조금 느려도 괜찮아요, 꾸준히 하면 따라와요 🙂'}`;
+  }
+  return `<div class="expect">📅 <b>이번 달 기대치</b> (${STAGES[st]}): ${exp}${act}<div class="muted small">자연 운동인의 일반적인 속도를 바탕으로 한 대략적인 코칭 값이에요. 개인차가 커요.</div></div>`;
 }
 function cmpHtml(it) {
   const ex = exById(it.exId);
@@ -359,10 +472,12 @@ function cmpHtml(it) {
       h += `<div class="metrics">${defs.map(d => `<div class="metric"><div class="lbl">${d.lbl}</div><div class="val">${fmt(cur[d.k])}${d.u}${deltaHtml(cur[d.k] - prev.m[d.k], d.u, d.inv)}</div></div>`).join('')}</div>`;
       const msg = message(ex, cur, prev.m);
       h += `<div class="msg ${msg.cls}">${msg.text}${isPR(it.exId, curDate, cur) ? '<span class="pr">🏆 PR</span>' : ''}</div>`;
-      if (isPlateau(it.exId, curDate)) h += `<div class="plateau">⚠️ 최근 3번 동안 기록이 제자리예요. 무게를 10% 정도 낮춰(디로드) 횟수를 채운 뒤 다시 올리거나, 반복 범위를 바꿔 보세요. 수면·식사도 점검해 봐요.</div>`;
+      const pi = plateauInfo(it.exId, curDate);
+      if (pi) h += plateauHtml(pi, ex);
     }
   }
   if (target) h += `<div class="target">🎯 ${cur ? '다음 목표' : '오늘 목표'}: <b>${esc(target)}</b></div>`;
+  h += pctLine(ex, cur || (prev && prev.m));
   return h;
 }
 function bindCards() {
@@ -515,7 +630,12 @@ function renderHistory() {
     hl.onclick = e => { const b = e.target.closest('[data-d]'); if (b) { curDate = b.dataset.d; go('#/log'); } };
   } else {
     const ids = recentIds().filter(id => sessionsFor(id).length);
-    hl.innerHTML = exListHtml(ids.map(exById), ex => {
+    const lv = ids.map(id => { const ex = exById(id), s = sessionsFor(id), r = pctValue(ex, s[s.length - 1].m); return r ? { ex, r } : null; }).filter(Boolean).sort((a, b) => a.r.top - b.r.top);
+    const sum = lv.length ? `<div class="card pct-sum"><h3 style="margin:0 0 6px">📊 종목별 내 수준 <span class="muted small">(최근 기록·추정)</span></h3>
+      ${lv.map(({ ex, r }) => `<div class="pct-row"><span>${esc(ex.name)}</span><b>상위 ${r.top}%</b><span class="lv">${r.level}</span></div>`).join('')}
+      <p class="small muted" style="margin:8px 0 0">헬스장/앱 이용자 기록 기준 추정 (Strength Level, 같은 성별·체중·나이). 일반인 전체 기준이면 순위는 더 높아요. <a href="#/evidence">근거</a></p></div>`
+      : (profStd() ? '' : `<div class="tip" style="margin-bottom:10px">설정에 성별·체중·나이를 넣으면 종목별로 상위 몇 %인지 보여 드려요.</div>`);
+    hl.innerHTML = sum + exListHtml(ids.map(exById), ex => {
       const s = sessionsFor(ex.id), last = s[s.length - 1];
       const best = ex.type === 'weight' ? `최고 ${fmt(Math.max(...s.map(x => x.m.top)))}kg` : ex.type === 'assist' ? `최저 보조 ${fmt(Math.min(...s.map(x => x.m.low)))}kg` : ex.type === 'cardio' ? `최장 ${fmt(Math.max(...s.map(x => x.m.totalReps)))}분` : `최고 ${Math.max(...s.map(x => x.m.bestReps))}${unitR(ex)}`;
       return `${s.length}회 기록 · ${best} · 최근 ${shortD(last.date)}`;
@@ -581,7 +701,9 @@ function renderExercise(id, sub) {
     <div class="chart-wrap">${chartSvg(s.map(x => ({ date: x.date, v: r1(x.m[mk]) })), o[2])}
       ${s.length < 2 ? '<div class="muted small" style="text-align:center">기록이 2번 이상 쌓이면 추세선이 보여요</div>' : ''}</div>
     ${tgt ? `<div class="target" style="margin-bottom:12px">🎯 다음 목표: <b>${esc(tgt)}</b></div>` : ''}
-    ${isPlateau(id, last.date) ? `<div class="plateau" style="margin-bottom:12px">⚠️ 최근 3번 동안 제자리예요. 디로드(무게 약 10%↓)나 반복 범위 변경을 시도해 보세요.</div>` : ''}
+    ${plateauInfo(id, last.date) ? `<div style="margin-bottom:12px">${plateauHtml(plateauInfo(id, last.date), ex)}</div>` : ''}
+    ${monthlyLine(ex, last.date)}
+    ${pctCard(ex, last.m)}
     <h3 style="font-size:16px;margin:14px 2px 8px">세션 기록</h3>
     ${s.slice().reverse().map((x, j, arr) => {
       const p = arr[j + 1]; const k = keyMetrics(ex)[1] === 'volume' ? 'volume' : keyMetrics(ex)[0];
@@ -595,12 +717,12 @@ function renderExercise(id, sub) {
 }
 const aliasList = ex => [...new Set(String(ex.aka || '').split(/\s+/).filter(t => t.length >= 2 && !exNorm(ex.name).includes(exNorm(t))))].slice(0, 8);
 function incText(ex) {
-  const [lo, hi] = ex.range || [8, 12], inc = ex.inc ?? 2.5, ld = LOAD_LBL[ex.load] ? `${LOAD_LBL[ex.load]} · ` : '';
+  const [lo, hi] = progRange(ex), inc = minInc(ex), ld = LOAD_LBL[ex.load] ? `${LOAD_LBL[ex.load]} · ` : '';
   if (ex.type === 'cardio') return `${ld}대화가 조금 힘든 정도(중강도)로 시작해요. 목표 ${hi}분을 채우면 시간 대신 속도·경사·저항을 조금씩 올려요.`;
-  if (ex.type === 'time') return `${ld}자세가 무너지기 직전까지 버텨요. 매번 5초씩 늘려요.`;
-  if (ex.type === 'assist') return `${ld}보조 kg이 낮을수록 어려워요. 모든 세트에서 ${hi}회를 채우면 보조를 ${fmt(inc)}kg 줄여요.`;
-  if (ex.type === 'bw') return `${ld}마지막 1~2회가 힘든 정도로 해요. ${hi}회를 넘기면 ${inc > 0 ? `${fmt(inc)}kg 추가 중량을 달거나 ` : ''}더 어려운 변형으로 바꿔요.`;
-  return `${ld}마지막 1~2회가 힘들지만 자세는 유지되는 무게가 적당해요. ${hi}회를 채우면 무게를 ${fmt(inc)}kg 올리고 ${lo}회부터 다시 쌓아요.`;
+  if (ex.type === 'time') return `${ld}자세가 무너지기 직전까지 버텨요. 같은 시간을 유지해도 좋고, 여유 있을 때 5초씩 늘려요.`;
+  if (ex.type === 'assist') return `${ld}보조 kg이 낮을수록 어려워요. 같은 보조로 모든 세트 ${hi}회를 채우면 보조를 ${fmt(inc)}kg 줄이고 ${lo}회부터 다시 쌓아요.`;
+  if (ex.type === 'bw') return `${ld}마지막 1~2회가 힘든 정도로 해요. 모든 세트 ${hi}회를 채우면 ${inc > 0 ? `${fmt(inc)}kg 추가 중량을 달거나 ` : ''}더 어려운 변형으로 바꿔요.`;
+  return `${ld}<b>더블 프로그레션</b>: 마지막 1~2회가 힘들지만(여유 1~2회) 자세는 유지되는 무게로 ${lo}~${hi}회. 같은 무게로 <b>모든 세트 ${hi}회</b>가 되면 그때만 ${fmt(inc)}kg 올리고 ${lo}회부터 다시 쌓아요. 매번 오르지 않아도 괜찮아요 — 지난번과 같으면 잘하고 있는 거예요.`;
 }
 function guideHtml(ex) {
   const safety = `<div class="safety">⚠️ <b>안전 안내</b><br>운동 중 날카롭거나 찌르는 통증, 관절 통증, 저림이 느껴지면 즉시 멈추세요. 통증이 계속되면 의사나 물리치료사 등 전문가와 상담하세요. 처음 하는 동작은 가벼운 무게로 자세부터 익히고, 무거운 무게는 보조자나 안전바를 꼭 사용하세요.</div>`;
@@ -613,8 +735,9 @@ function guideHtml(ex) {
       <h3 style="margin-top:10px">🎯 타깃 근육</h3>
       <div><b>주동근</b> ${esc(ex.primary)}</div>${ex.secondary ? `<div class="muted"><b>보조근</b> ${esc(ex.secondary)}</div>` : ''}
     </div>
+    ${window.FORMS ? window.FORMS.guideFigureHtml(ex) : ''}
     <div class="card"><h3 style="margin-top:0">📋 권장 세트/횟수</h3>
-      <div class="rec"><div><span class="muted small">세트</span><b>${esc(ex.rec.sets)}</b></div><div><span class="muted small">${ex.type === 'time' || ex.type === 'cardio' ? '시간' : '횟수'}</span><b>${esc(ex.rec.reps)}</b></div><div><span class="muted small">휴식</span><b>${esc(ex.rec.rest)}</b></div></div>
+      <div class="rec"><div><span class="muted small">세트</span><b>${esc(ex.rec.sets)}</b></div><div><span class="muted small">${ex.type === 'time' || ex.type === 'cardio' ? '시간' : '횟수'}</span><b>${esc(recReps(ex))}</b></div><div><span class="muted small">휴식</span><b>${esc(ex.rec.rest)}</b></div></div>
       <p class="muted small" style="margin:8px 0 0">${incText(ex)}</p></div>
     <div class="card"><h3 style="margin-top:0">✅ 동작 순서</h3><ol>${ex.steps.map(t => `<li>${esc(t)}</li>`).join('')}</ol></div>
     <div class="card"><h3 style="margin-top:0">🚫 흔한 실수</h3><ul>${ex.mistakes.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>
@@ -622,6 +745,7 @@ function guideHtml(ex) {
     <button class="btn primary block" id="addThis" style="margin-top:12px">오늘 기록에 추가</button></div>`;
 }
 function bindGuide(ex) {
+  if (window.FORMS) window.FORMS.start(app, ex);
   const a = $('#addThis'); if (a) a.onclick = () => { curDate = todayStr(); addExercise(ex.id); };
   const d = $('#delCustom'); if (d) d.onclick = () => {
     if (sessionsFor(ex.id).length) return toast('기록이 있는 운동은 삭제할 수 없어요. 기록을 먼저 지워 주세요.');
@@ -695,7 +819,7 @@ function renderSettings() {
       <p class="small" style="margin:0">아이폰: 사파리 하단 <b>공유</b> → <b>홈 화면에 추가</b><br>안드로이드: 크롬 메뉴(⋮) → <b>홈 화면에 추가</b> 또는 <b>앱 설치</b><br><span class="muted">한 번 열고 나면 인터넷 없이도 동작해요.</span></p></div>
     <button class="btn block" id="evBtn" style="margin-bottom:12px">📚 계산·음식 데이터 근거 (논문·출처)</button>
     <button class="btn danger block" id="wipe">전체 기록 삭제</button>
-    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v3 · 상우님 전용 💪</p>`;
+    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v4 · 상우님 전용 💪</p>`;
   $('#evBtn').onclick = () => go('#/evidence');
   const fname = () => `fitlog-backup-${todayStr()}.json`;
   const markBackup = () => { db.meta.lastBackup = todayStr(); save(); };
@@ -755,6 +879,11 @@ const REFS = [
   { k: 'msj', t: 'Mifflin MD, St Jeor ST, Hill LA, Scott BJ, Daugherty SA, Koh YO. A new predictive equation for resting energy expenditure in healthy individuals. Am J Clin Nutr. 1990;51(2):241–247.', doi: '10.1093/ajcn/51.2.241' },
   { k: 'morton', t: 'Morton RW, Murphy KT, McKellar SR, et al. A systematic review, meta-analysis and meta-regression of the effect of protein supplementation on resistance training-induced gains in muscle mass and strength in healthy adults. Br J Sports Med. 2018;52(6):376–384.', doi: '10.1136/bjsports-2017-097608' },
   { k: 'issn', t: 'Jäger R, Kerksick CM, Campbell BI, et al. International Society of Sports Nutrition Position Stand: protein and exercise. J Int Soc Sports Nutr. 2017;14:20.', doi: '10.1186/s12970-017-0177-8' },
+  { k: 'acsm', t: 'American College of Sports Medicine. American College of Sports Medicine position stand. Progression models in resistance training for healthy adults. Med Sci Sports Exerc. 2009;41(3):687–708.', doi: '10.1249/MSS.0b013e3181915670' },
+  { k: 'plotkin', t: 'Plotkin D, Coleman M, Van Every D, et al. Progressive overload without progressing load? The effects of load or repetition progression on muscular adaptations. PeerJ. 2022;10:e14142.', doi: '10.7717/peerj.14142' },
+  { k: 'rir', t: 'Helms ER, Cronin J, Storey A, Zourdos MC. Application of the repetitions in reserve-based rating of perceived exertion scale for resistance training. Strength Cond J. 2016;38(4):42–49.', doi: '10.1519/SSC.0000000000000218' },
+  { k: 'zourdos', t: 'Zourdos MC, Klemp A, Dolan C, et al. Novel resistance training–specific rating of perceived exertion scale measuring repetitions in reserve. J Strength Cond Res. 2016;30(1):267–275.', doi: '10.1519/JSC.0000000000001049' },
+  { k: 'deload', t: 'Bell L, Strafford BW, Coleman M, Androulakis Korakakis P, Nolan D. Integrating deloading into strength and physique sports training programmes: an international Delphi consensus approach. Sports Med Open. 2023;9:87.', doi: '10.1186/s40798-023-00633-0' },
   { k: 'helms', t: 'Helms ER, Aragon AA, Fitschen PJ. Evidence-based recommendations for natural bodybuilding contest preparation: nutrition and supplementation. J Int Soc Sports Nutr. 2014;11:20.', doi: '10.1186/1550-2783-11-20' },
 ];
 const DATA_SRCS = [
@@ -781,6 +910,17 @@ function renderEvidence() {
       <p class="small">맞을 수도, 아닐 수도 있어요. <b>익히면 수분이 빠져 같은 고기가 가벼워지기</b> 때문에, 100g당 단백질은 생것보다 익힌 것이 높아요. 그래서 무게를 <b>익히기 전에 쟀는지, 익힌 뒤에 쟀는지</b>에 맞는 항목을 고르는 게 중요해요.</p>
       <table class="ptable">${cb.map(f => `<tr><th>${esc(f.name.replace('닭가슴살 ', ''))}</th><td><b>${fmt(f.p)}g</b> · ${fmt(f.k)}kcal <span class="muted">(${esc(f.src)})</span></td></tr>`).join('')}</table>
       <p class="small muted">36g 근처 값은 팬에 구워 수분이 많이 빠진 상태(농진청 35.5g)예요. 시판 훈제·스테이크 닭가슴살은 양념·수분이 들어가 보통 100g당 20~25g이에요. 포장지 값이 있으면 그 값이 가장 정확해요.</p></div>
+    <div class="card ev"><h3>📈 무게는 언제 올리나요? (더블 프로그레션)</h3>
+      <p class="small">매번 무게나 횟수를 올려야 하는 건 아니에요. 앱은 <b>정해진 반복 범위</b>(다관절 프리웨이트 6~10회, 머신 다관절 8~12회, 고립 10~15회 · 원래 12회 이상인 종목은 그대로) 안에서 <b>같은 무게로 모든 작업 세트가 범위 위쪽에 닿으면</b> 그때만 기구의 최소 단위(바벨 2.5kg, 덤벨 1~2kg, 머신 5kg 등)를 올리고 아래쪽부터 다시 쌓게 해요. 미국스포츠의학회(ACSM) 입장문은 목표 횟수를 1~2회 넘길 수 있을 때 2~10% 올리는 방식을 권해요${ref('acsm')}. 무게 대신 횟수를 늘려도 근비대·근력 향상이 비슷했다는 연구도 있어요${ref('plotkin')}.</p>
+      <p class="small">강도는 <b>여유 1~2회(RIR)</b>를 남기는 정도를 기준으로 해요${ref('rir')}${ref('zourdos')}. 지난번과 같은 기록은 실패가 아니라 정상적인 과정이에요.</p>
+      <p class="small"><b>정체</b>: 예상 1RM·최고 중량이 <b>4번 이상, 그리고 3주(21일) 이상</b> 그대로일 때만 알려 드려요. 먼저 잠·식사를 점검하고, 같은 무게로 2주 더 해 본 뒤, 그래도 같으면 1주 정도 가볍게(약 10%↓) 하는 <b>디로드</b>를 권해요. 전문가 합의에서도 디로드는 피로를 풀고 다음 훈련을 준비하는 짧은 기간으로 정의돼요${ref('deload')}.</p>
+      <p class="small"><b>이번 달 기대치</b>: 초보는 하체 다관절 예상 1RM이 한 달 약 +2.5~5kg, 상체는 +1~2.5kg 정도, 중급으로 갈수록 느려져요. 이 값은 자연 운동인의 일반적인 속도를 정리한 <b>대략적인 코칭 값</b>이고, 특정 연구의 수치가 아니에요. 개인차(수면·식사·나이·운동 경력)가 커요.</p></div>
+    <div class="card ev"><h3>📊 상위 몇 %는 어떻게 계산하나요?</h3>
+      <p class="small"><b>Strength Level</b>(strengthlevel.com) 표준표를 써요. 사용자들이 직접 올린 기록(예: 벤치프레스 약 ${fmt(4871)}만 건, 데이터 기준일 ${esc(window.STD ? window.STD.cut : '2026년 3월')})으로 만든 표로, 성별·체중별·나이별로 Beginner(상위 95%)·Novice(80%)·Intermediate(50%)·Advanced(20%)·Elite(5%) 기준 무게가 나와 있어요. 앱의 단계 이름은 Beginner 미만 <b>입문</b>, Beginner~Novice <b>초보</b>, Novice~Intermediate <b>초중급</b>, Intermediate~Advanced <b>중급</b>, Advanced~Elite <b>상급</b>, Elite 이상 <b>최상급</b>이에요. 앱은 내 체중·나이에 맞게 표를 보간하고, 그 사이를 직선으로 이어 <b>예상 1RM(Epley 공식)</b>이 어디쯤인지 추정해요. 덤벨 종목은 한 손 덤벨 무게 기준, 풀업·친업·딥스·푸시업은 맨몸 최고 횟수 기준이에요.</p>
+      <p class="small"><b>주의</b>: 이 순위는 <b>헬스장/앱 이용자 기록 기준</b>이에요. 기록을 올리는 사람은 보통 운동을 꾸준히 하는 편이라, 운동을 안 하는 사람까지 포함한 일반인 기준이면 순위가 더 높게 나와요. 머신·케이블은 기구마다 무게 감각이 달라 오차가 커요. 표가 없는 종목은 표시하지 않아요 (${window.STD ? Object.keys(window.STANDARDS.map).length : 0}개 종목 지원).</p>
+      <p class="small"><b>비훈련자 참고값</b>: 벤치·스쿼트·데드리프트·오버헤드프레스는 <b>ExRx</b>의 성인 비훈련자(Untrained, 18~39세) 1RM 표와도 비교해 드려요. ExRx 스스로 이 표는 인구 통계(규준)가 아니라고 밝히고 있어서 <b>순위가 아닌 참고값</b>으로만 보여 줘요.</p>
+      <p class="small"><a href="https://strengthlevel.com/strength-standards" target="_blank" rel="noopener">strengthlevel.com/strength-standards</a><br><a href="https://exrx.net/Testing/WeightLifting/StrengthStandards" target="_blank" rel="noopener">exrx.net/Testing/WeightLifting/StrengthStandards</a></p></div>
+    <div class="card ev"><h3>🖼️ 자세 그림</h3><p class="small">자세 그림은 앱이 직접 그린 단순화한 그림이에요(인터넷 없이 동작). 관절 각도·움직임 경로는 일반적인 동작 설명을 바탕으로 했고, 사람마다 체형에 따라 바른 자세가 조금씩 달라요. 처음 하는 동작은 트레이너에게 확인받는 걸 추천해요.</p></div>
     <div class="card ev"><h3>🍱 음식 데이터 출처</h3>
       ${DATA_SRCS.map(s => `<p class="small"><b>${s[0]}</b><br>${s[1]}<br><a href="${s[2]}" target="_blank" rel="noopener">${s[2]}</a></p>`).join('')}
       <p class="small">모든 값은 100g(음료·국물은 100ml)당으로 저장해요. "한 줌", "1봉" 같은 분량은 제품 표시중량, 식약처 1인분 중량, 일반 계량 기준이고, <b>약</b>이 붙은 분량은 어림값이에요. 한 번 기록한 양은 다음에 같은 음식을 고를 때 그대로 기억해요.</p>
@@ -1378,5 +1518,5 @@ route();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
-window.__fitlog = { get db() { return db; }, metrics, sessionsFor, isPlateau, nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods, filterEx, exById, keyMetrics };
+window.__fitlog = { get db() { return db; }, metrics, sessionsFor, isPlateau, plateauInfo, progRange, minInc, pct: (id, m) => pctValue(exById(id), m), nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods, filterEx, exById, keyMetrics };
 })();
