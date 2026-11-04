@@ -318,9 +318,9 @@ $('#backBtn').addEventListener('click', () => { if (history.length > 1) history.
 function route() {
   const parts = (location.hash || '#/log').slice(2).split('/');
   const tab = parts[0] || 'log';
-  const tabFor = tab === 'ex' ? (parts[2] === 'guide' ? 'guide' : 'history') : tab === 'weight' ? 'diet' : tab === 'evidence' ? 'settings' : tab === 'routine' ? 'log' : tab;
+  const tabFor = tab === 'ex' ? (parts[2] === 'guide' ? 'guide' : 'history') : tab === 'weight' ? 'diet' : tab === 'evidence' || tab === 'gym' ? 'settings' : tab === 'routine' ? 'log' : tab;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tabFor));
-  $('#backBtn').classList.toggle('hidden', tab !== 'ex' && tab !== 'weight' && tab !== 'evidence' && tab !== 'routine');
+  $('#backBtn').classList.toggle('hidden', tab !== 'ex' && tab !== 'weight' && tab !== 'evidence' && tab !== 'routine' && tab !== 'gym');
   window.scrollTo(0, 0);
   if (window.FORMS) window.FORMS.stop();
   if (tab === 'history') return renderHistory();
@@ -329,6 +329,7 @@ function route() {
   if (tab === 'guide') return renderGuide();
   if (tab === 'settings') return renderSettings();
   if (tab === 'evidence') return renderEvidence();
+  if (tab === 'gym') return renderGym();
   if (tab === 'routine') return renderRoutine(parts.slice(1).map(decodeURIComponent));
   if (tab === 'ex') return renderExercise(decodeURIComponent(parts[1] || ''), parts[2] || 'records');
   return renderLog();
@@ -542,7 +543,9 @@ const exCat = e => (window.equipCat ? window.equipCat(e) : '기타');
 const BRAND_CHIPS = ['전체', '짐80', '파나타', '일반'];
 const BRAND_KEY = { 짐80: 'gym80', 파나타: 'panatta' };
 const myBrands = () => (Array.isArray(db.profile.gymBrands) ? db.profile.gymBrands : []).filter(b => window.BRANDS && window.BRANDS[b]);
-const brandRank = e => { const m = myBrands(), i = m.indexOf(e.brand); return m.length ? (i >= 0 ? i : m.length) : (e.brand ? 1 : 0); };
+// 내 헬스장(설정)이 있으면 그 헬스장 순서가 먼저: 노비스짐 = 짐80 → 파나타 FO → 프리웨이트·케이블 → 일반 머신 → 다른 파나타
+const myGym = () => (window.GYMS && window.GYMS[db.profile.gym]) || null;
+const brandRank = e => { const g = myGym(); if (g) return g.rank(e); const m = myBrands(), i = m.indexOf(e.brand); return m.length ? (i >= 0 ? i : m.length) : (e.brand ? 1 : 0); };
 const brandTag = e => e.brand ? `<span class="tag brand ${e.brand}">${esc(window.BRANDS[e.brand])} · ${esc(e.seriesKo)}</span>` : '';
 function filterEx(q, g = '전체', eq = '전체', br = '전체') {
   const rec = recentIds();
@@ -550,7 +553,7 @@ function filterEx(q, g = '전체', eq = '전체', br = '전체') {
   if (g !== '전체' && g !== '최근') list = list.filter(e => e.group === g);
   if (eq && eq !== '전체') list = list.filter(e => exCat(e) === eq);
   if (br && br !== '전체') list = list.filter(e => br === '일반' ? !e.brand : e.brand === BRAND_KEY[br]);
-  if (!q && g !== '최근' && myBrands().length) list = list.map((e, i) => [brandRank(e), i, e]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]);
+  if (!q && g !== '최근' && (myBrands().length || myGym())) list = list.map((e, i) => [brandRank(e), i, e]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]);
   if (q) {
     const s = exNorm(q);
     const score = e => {
@@ -849,7 +852,7 @@ function renderSettings() {
       <p class="small" style="margin:0">아이폰: 사파리 하단 <b>공유</b> → <b>홈 화면에 추가</b><br>안드로이드: 크롬 메뉴(⋮) → <b>홈 화면에 추가</b> 또는 <b>앱 설치</b><br><span class="muted">한 번 열고 나면 인터넷 없이도 동작해요.</span></p></div>
     <button class="btn block" id="evBtn" style="margin-bottom:12px">📚 계산·음식 데이터 근거 (논문·출처)</button>
     <button class="btn danger block" id="wipe">전체 기록 삭제</button>
-    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v7 · 상우님 전용 💪</p>`;
+    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v8 · 상우님 전용 💪</p>`;
   $('#evBtn').onclick = () => go('#/evidence');
   const fname = () => `fitlog-backup-${todayStr()}.json`;
   const markBackup = () => { db.meta.lastBackup = todayStr(); save(); };
@@ -962,7 +965,8 @@ function renderEvidence() {
     <div class="card ev"><h3>🏷️ 짐80·파나타 기구 목록 출처</h3>
       <p class="small">모델명과 모델 번호는 아래 자료에 실린 것만 넣었어요. 헬스장마다 갖춘 기구·연식이 달라서 이름이 조금 다를 수 있어요. 동작 방법·자세 그림은 같은 동작의 기본 운동과 같고, 상위 %는 같은 종류 기구 표가 맞는 경우(주로 핀 머신, 레그프레스·핵스쿼트 등)만 보여 줘요.</p>
       <p class="small"><b>gym80</b> 종합 브로슈어 2025 (Sygnum · Pure Kraft)<br><a href="https://gym80.ch/wp-content/uploads/2026/08/GESAMTBROSCHUeRE-WEB-2025-GESAMT.pdf" target="_blank" rel="noopener">gym80.ch 브로슈어 PDF</a> · <a href="https://www.gym80.de" target="_blank" rel="noopener">gym80.de</a></p>
-      <p class="small"><b>Panatta</b> 공식 사이트 Freeweight Special 목록, Freeweight HP 카탈로그, 공식 판매처 목록(Fit Evo · HP · Special 모델 번호)<br><a href="https://www.panattasport.com/en/free-weight-special/" target="_blank" rel="noopener">panattasport.com</a> · <a href="https://panattafitness.com/product-category/fit-evo/" target="_blank" rel="noopener">panattafitness.com</a></p>
+      <p class="small"><b>Panatta</b> 공식 사이트 Freeweight Special 목록, Freeweight HP 카탈로그, 공식 판매처 목록(Fit Evo · HP · Special · 신형 Freeweight One 모델 번호)<br><a href="https://www.panattasport.com/en/free-weight-special/" target="_blank" rel="noopener">panattasport.com</a> · <a href="https://panattafitness.com/product-category/fit-evo/" target="_blank" rel="noopener">panattafitness.com</a> · <a href="https://panattafitness.com/product-category/freeweight-one/" target="_blank" rel="noopener">Freeweight One 목록</a></p>
+      <p class="small">📍 <b>노비스짐 교동점</b> 기구는 당근 지점 프로필 글·사진, 짐80코리아 오피셜센터 목록에서 확인했어요. <a href="#/gym">기구 목록·출처 보기</a></p>
       <p class="small muted">브랜드 기구 ${(window.BRAND_EX || []).length}개 · 짐80 ${(window.BRAND_EX || []).filter(e => e.brand === 'gym80').length} · 파나타 ${(window.BRAND_EX || []).filter(e => e.brand === 'panatta').length}</p></div>
     <div class="card ev"><h3>🍱 음식 데이터 출처</h3>
       ${DATA_SRCS.map(s => `<p class="small"><b>${s[0]}</b><br>${s[1]}<br><a href="${s[2]}" target="_blank" rel="noopener">${s[2]}</a></p>`).join('')}
@@ -1578,11 +1582,44 @@ const RT_TPL = [
     { name: '하체 B', items: [[['pendulum_squat', 'leg_press'], 3], [['lying_leg_curl', 'seated_leg_curl'], 4], [['leg_press', 'horizontal_leg_press'], 3], [['abductor'], 3], [['calf_raise', 'seated_calf'], 4], [['ab_crunch_machine', 'cable_crunch'], 3]] },
   ] },
 ];
+// 노비스짐 교동점 맞춤: 사진·글로 확인된 프리웨이트(랙·바벨·덤벨·벤치)와 가능성 높은 케이블·스미스 위주.
+// 모델이 확인 안 된 머신은 기본 동작으로 두고 💡 메모에 바꿀 거리를 적었어요. (fixed: 브랜드 자동 교체 안 함)
+const NV = {
+  press: '체스트프레스 머신(짐80·파나타 FO)이 비어 있으면 바꿔도 돼요 · 교동점 모델은 미확인',
+  pull: '케이블 기구는 사진상 있을 가능성이 높아요 · 짐80·파나타 FO 랫풀다운으로 바꿔도 돼요',
+  row: '로우 머신(짐80·파나타 FO 로우 로우·하이 로우)으로 바꿔도 돼요',
+  lat: '사레레 머신(짐80·파나타 FO)이 있으면 바꿔도 돼요',
+  cable: '케이블이 없거나 차 있으면 바꾸기에서 덤벨 동작으로',
+  smith: '스미스머신은 사진상 있을 가능성이 높아요 · 없으면 바꾸기에서 바벨·덤벨 버전으로',
+  squat: '핵스쿼트·펜듈럼(짐80·파나타 FO)이 있으면 바꿔도 돼요',
+  hip: '부티빌더 오피셜 센터라 힙쓰러스트 머신이 비어 있으면 그걸로 해도 좋아요 · 모델은 미확인',
+  abd: '부티빌더·아웃타이 머신이 있으면 그걸로 바꿔도 돼요',
+  curl: '레그컬 기구가 있는지는 확인 못 했어요 · 없으면 노르딕 컬이나 덤벨 루마니안 데드리프트로',
+  ext: '레그익스텐션 기구가 있는지는 확인 못 했어요 · 없으면 고블릿 스쿼트로',
+  calf: '스미스가 없으면 덤벨 들고 카프레이즈',
+};
+RT_TPL.push(
+  { id: 'novis4', gym: 'novis', fixed: true, name: '노비스짐 맞춤 (주 4회)', freq: 4, desc: '상체·하체를 번갈아 (예: 월·화·목·금). 교동점에서 확인된 프리웨이트존·덤벨 위주로 짰어요.', days: [
+    { name: '상체 A', items: [[['bench'], 3, NV.press], [['lat_pulldown'], 3, NV.pull], [['incline_db'], 3], [['db_row'], 3, NV.row], [['lateral_raise'], 4, NV.lat], [['face_pull'], 3, NV.cable], [['triceps_pushdown'], 3, NV.cable], [['biceps_curl'], 4]] },
+    { name: '하체 A', items: [[['squat'], 3, NV.squat], [['rdl'], 3], [['bss'], 2], [['hip_thrust'], 3, NV.hip], [['lying_leg_curl'], 3, NV.curl], [['smith_calf'], 3, NV.calf]] },
+    { name: '상체 B', items: [[['db_shoulder'], 2], [['smith_incline'], 3, NV.smith], [['cable_fly'], 2, NV.cable], [['chest_supported_row'], 3, NV.row], [['close_pulldown'], 3, NV.pull], [['cable_lateral'], 4, NV.cable], [['cable_rear_fly'], 3, NV.cable], [['oh_triceps'], 2, NV.cable]] },
+    { name: '하체 B', items: [[['smith_squat'], 3, NV.squat], [['db_rdl'], 3], [['leg_ext'], 3, NV.ext], [['seated_leg_curl'], 3, NV.curl], [['cable_abduction'], 2, NV.abd], [['smith_calf'], 4, NV.calf], [['cable_crunch'], 2, NV.cable]] },
+  ] },
+  { id: 'novis5', gym: 'novis', fixed: true, name: '노비스짐 맞춤 (주 5회)', freq: 5, desc: '상체·하체 다음 밀기·당기기·하체 (예: 월·화·수·금·토). 프리웨이트존이 넓어서 주 5회도 충분히 돌릴 수 있어요.', days: [
+    { name: '상체', items: [[['bench'], 3, NV.press], [['lat_pulldown'], 3, NV.pull], [['db_shoulder'], 2], [['db_row'], 3, NV.row], [['lateral_raise'], 4, NV.lat], [['biceps_curl'], 3], [['triceps_pushdown'], 2, NV.cable]] },
+    { name: '하체 A', items: [[['squat'], 3, NV.squat], [['rdl'], 3], [['bss'], 2], [['hip_thrust'], 3, NV.hip], [['lying_leg_curl'], 3, NV.curl], [['smith_calf'], 3, NV.calf]] },
+    { name: '밀기', items: [[['incline_db'], 3], [['smith_incline'], 2, NV.smith], [['cable_fly'], 3, NV.cable], [['cable_lateral'], 4, NV.cable], [['oh_triceps'], 3, NV.cable]] },
+    { name: '당기기', items: [[['chest_supported_row'], 3, NV.row], [['close_pulldown'], 3, NV.pull], [['cable_rear_fly'], 3, NV.cable], [['face_pull'], 3, NV.cable], [['hammer_curl'], 3]] },
+    { name: '하체 B', items: [[['smith_squat'], 3, NV.squat], [['db_rdl'], 3], [['leg_ext'], 3, NV.ext], [['seated_leg_curl'], 3, NV.curl], [['cable_abduction'], 2, NV.abd], [['smith_calf'], 4, NV.calf], [['cable_crunch'], 3, NV.cable]] },
+  ] },
+);
 const rtTpl = id => RT_TPL.find(t => t.id === id);
+// 보이는 템플릿: 내 헬스장 맞춤을 맨 앞에, 다른 헬스장 것은 숨김
+const rtVisible = () => { const g = db.profile.gym; return [...RT_TPL.filter(t => t.gym && t.gym === g), ...RT_TPL.filter(t => !t.gym)]; };
 function normRoutine(r) {
   if (!isObj(r) || !Array.isArray(r.days)) return null;
   const days = r.days.filter(d => isObj(d) && Array.isArray(d.items)).slice(0, 7).map(d => ({ name: String(d.name || '루틴').slice(0, 30),
-    items: d.items.filter(it => it && typeof it.exId === 'string').slice(0, 15).map(it => ({ exId: it.exId, sets: Math.max(1, Math.min(10, Math.round(+it.sets) || 3)) })) }));
+    items: d.items.filter(it => it && typeof it.exId === 'string').slice(0, 15).map(it => ({ exId: it.exId, sets: Math.max(1, Math.min(10, Math.round(+it.sets) || 3)), ...(typeof it.note === 'string' && it.note ? { note: it.note.slice(0, 160) } : {}) })) }));
   if (!days.length) return null;
   const log = {}; for (const [k, v] of Object.entries(isObj(r.log) ? r.log : {})) if (isDate(k) && Number.isInteger(v)) log[k] = v;
   return { tpl: String(r.tpl || ''), days, next: Number.isInteger(r.next) && r.next >= 0 && r.next < days.length ? r.next : 0, log };
@@ -1592,7 +1629,7 @@ function pickSlot(cands, brands = myBrands()) {
   for (const c of cands) for (const b of brands) { const e = (window.BRAND_EX || []).find(x => x.base === c && x.brand === b); if (e) return e.id; }
   return cands[0];
 }
-const buildTpl = (t, brands) => t.days.map(d => ({ name: d.name, items: d.items.map(([c, n]) => ({ exId: pickSlot(c, brands), sets: n })) }));
+const buildTpl = (t, brands) => t.days.map(d => ({ name: d.name, items: d.items.map(([c, n, note]) => ({ exId: t.fixed ? c[0] : pickSlot(c, brands), sets: n, ...(note ? { note } : {}) })) }));
 const restFor = ex => { const k = exKind(ex); return k === 'free' ? '2~3분' : k === 'machine' ? '1분 30초~2분' : k === 'iso' ? '1~1분 30초' : (ex.rec ? ex.rec.rest : '1~2분'); };
 const rtLine = (ex, n) => `${n}세트 × ${ex.type === 'weight' ? recReps(ex) : ex.rec ? ex.rec.reps : ''} · 휴식 ${restFor(ex)}`;
 // 주간 부위별 세트: 주동근 1세트, 보조근 0.5세트로 셈
@@ -1621,7 +1658,7 @@ function dayCardHtml(d, di, edit) {
   const sets = d.items.reduce((a, it) => a + it.sets, 0);
   return `<section class="card rt-day" data-d="${di}"><div class="rt-dh"><h3>${di + 1}일차 · ${esc(d.name)}</h3><span class="muted small">${d.items.length}종목 · ${sets}세트</span></div>
     ${d.items.map((it, k) => { const ex = exById(it.exId); return `<div class="rt-it" data-k="${k}">
-      <div class="rt-t"><a href="#/ex/${encodeURIComponent(ex.id)}/guide">${esc(ex.name)}</a><div class="s">${brandTag(ex)}${esc(rtLine(ex, it.sets))}</div></div>
+      <div class="rt-t"><a href="#/ex/${encodeURIComponent(ex.id)}/guide">${esc(ex.name)}</a><div class="s">${brandTag(ex)}${esc(rtLine(ex, it.sets))}</div>${it.note ? `<div class="rt-note">💡 ${esc(it.note)}</div>` : ''}</div>
       ${edit ? `<div class="rt-ed"><button class="mini" data-act="minus" aria-label="세트 줄이기">−</button><button class="mini" data-act="plus" aria-label="세트 늘리기">＋</button><button class="mini" data-act="swap">바꾸기</button><button class="mini del" data-act="rm" aria-label="운동 빼기">✕</button></div>` : ''}</div>`; }).join('')}
     ${edit ? `<button class="btn sm" data-act="addIt" style="margin-top:6px">＋ 운동 추가</button>` : ''}</section>`;
 }
@@ -1631,7 +1668,8 @@ function renderRoutine(parts = []) {
   if (mode === 'tpl' && rtTpl(arg)) {
     const t = rtTpl(arg), days = buildTpl(t);
     setTitle(t.name);
-    app.innerHTML = `<div class="card"><p style="margin:0">${esc(t.desc)}</p>${myBrands().length ? `<p class="small muted" style="margin:6px 0 0">🏷️ 내 헬스장 기구(${myBrands().map(b => window.BRANDS[b]).join('·')})로 맞췄어요. 시작한 뒤 종목마다 바꿀 수 있어요.</p>` : `<p class="small muted" style="margin:6px 0 0">설정 → <b>내 헬스장 기구</b>에서 짐80·파나타를 고르면 그 기구로 바꿔 드려요.</p>`}</div>
+    const gymHint = t.gym && window.GYMS[t.gym] ? `<p class="small muted" style="margin:6px 0 0">📍 ${esc(window.GYMS[t.gym].name)} 공개 글·사진 기준이에요. 모델까지 확인된 머신은 없어서 💡 메모에 바꿀 거리를 적었어요. <a href="#/gym">기구 목록·출처 보기</a></p>` : '';
+    app.innerHTML = `<div class="card"><p style="margin:0">${esc(t.desc)}</p>${gymHint ? gymHint : myBrands().length ? `<p class="small muted" style="margin:6px 0 0">🏷️ 내 헬스장 기구(${myBrands().map(b => window.BRANDS[b]).join('·')})로 맞췄어요. 시작한 뒤 종목마다 바꿀 수 있어요.</p>` : `<p class="small muted" style="margin:6px 0 0">설정 → <b>내 헬스장 기구</b>에서 짐80·파나타를 고르면 그 기구로 바꿔 드려요.</p>`}</div>
       ${weeklyHtml(days)}${days.map((d, i) => dayCardHtml(d, i, false)).join('')}
       <button class="btn primary block" id="useTpl" style="min-height:54px">✅ 이 루틴으로 시작</button>`;
     $('#useTpl').onclick = () => {
@@ -1642,8 +1680,8 @@ function renderRoutine(parts = []) {
   }
   if (mode === 'list' || !db.routine) {
     setTitle('추천 루틴');
-    app.innerHTML = `${RT_WHY}${RT_TPL.map(t => { const days = buildTpl(t), w = weeklySets(days); const ok = MUSCLE_CATS.filter(([n]) => !['어깨 앞', '복근'].includes(n)).filter(([n]) => w[n].d + w[n].i / 2 >= 10).length;
-      return `<button class="list-item rt-tpl" data-t="${t.id}"><div><div class="t">${esc(t.name)} ${db.routine && db.routine.tpl === t.id ? '<span class="tag">사용 중</span>' : ''}</div><div class="s">${esc(t.desc)}</div><div class="s">${days.map(d => esc(d.name)).join(' · ')} · 주요 부위 ${ok}/10곳 주 10세트 이상</div></div><span class="chev">›</span></button>`; }).join('')}`;
+    app.innerHTML = `${RT_WHY}${rtVisible().map(t => { const days = buildTpl(t), w = weeklySets(days); const ok = MUSCLE_CATS.filter(([n]) => !['어깨 앞', '복근'].includes(n)).filter(([n]) => w[n].d + w[n].i / 2 >= 10).length;
+      return `<button class="list-item rt-tpl" data-t="${t.id}"><div><div class="t">${esc(t.name)} ${t.gym ? '<span class="tag brand">📍 내 헬스장</span>' : ''}${db.routine && db.routine.tpl === t.id ? '<span class="tag">사용 중</span>' : ''}</div><div class="s">${esc(t.desc)}</div><div class="s">${days.map(d => esc(d.name)).join(' · ')} · 주요 부위 ${ok}/10곳 주 10세트 이상</div></div><span class="chev">›</span></button>`; }).join('')}`;
     app.querySelectorAll('[data-t]').forEach(b => b.onclick = () => go('#/routine/tpl/' + b.dataset.t));
     return;
   }
@@ -1665,18 +1703,20 @@ function renderRoutine(parts = []) {
     if (act === 'plus') { day.items[k].sets = Math.min(10, day.items[k].sets + 1); return done(); }
     if (act === 'rm') { if (day.items.length <= 1) return toast('하루에 최소 1종목은 있어야 해요'); day.items.splice(k, 1); toast('뺐어요'); return done(); }
     if (act === 'addIt') return openPicker(id => { closeSheet(); if (day.items.some(x => x.exId === id)) return toast('이미 있는 운동이에요'); day.items.push({ exId: id, sets: 3 }); done(); });
-    if (act === 'swap') return openSwap(day.items[k].exId, id => { day.items[k].exId = id; closeSheet(); done(); toast('바꿨어요'); });
+    if (act === 'swap') return openSwap(day.items[k].exId, id => { day.items[k].exId = id; delete day.items[k].note; closeSheet(); done(); toast('바꿨어요'); });
   };
 }
 // 같은 동작(그림 패턴)·같은 부위 운동 → 내 헬스장 기구 먼저
+// 비슷한 동작끼리 묶기 (프리웨이트 ↔ 머신으로 바꿀 수 있게)
+const PAT_FAM = { bench: 'press', chestpress: 'press', squat: 'sq', hack: 'sq', abd: 'abd', abdCable: 'abd', fly: 'rear', rearFlyCable: 'rear', facepull: 'rear' };
 function swapCands(id) {
-  const ex = exById(id), M = (window.FORMS && window.FORMS.MAP) || {}, pat = M[id] ? M[id][0] : null, fam = ex.base || ex.id;
-  return allEx().filter(e => e.id !== id && e.type === ex.type && e.group === ex.group && ((e.base || e.id) === fam || (pat && M[e.id] && M[e.id][0] === pat)))
+  const ex = exById(id), M = (window.FORMS && window.FORMS.MAP) || {}, pf = x => (M[x] ? PAT_FAM[M[x][0]] || M[x][0] : null), pat = pf(id), fam = ex.base || ex.id;
+  return allEx().filter(e => e.id !== id && e.type === ex.type && e.group === ex.group && ((e.base || e.id) === fam || (pat && pf(e.id) === pat)))
     .map((e, i) => [brandRank(e), (e.base || e.id) === fam ? 0 : 1, i, e]).sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]).map(x => x[3]);
 }
 function openSwap(id, onPick) {
   const ex = exById(id), list = swapCands(id);
-  openSheet(`<h2>바꾸기</h2><p class="muted small" style="margin:0 0 8px">지금: <b>${esc(ex.name)}</b><br>같은 동작·같은 부위 운동이에요${myBrands().length ? ' (내 헬스장 기구 먼저)' : ''}.</p>
+  openSheet(`<h2>바꾸기</h2><p class="muted small" style="margin:0 0 8px">지금: <b>${esc(ex.name)}</b><br>같은 동작·같은 부위 운동이에요${myGym() ? ` (${esc(myGym().short)}: ${esc(myGym().rankKo.slice(0, 3).join(' → '))} 순)` : myBrands().length ? ' (내 헬스장 기구 먼저)' : ''}.</p>
     <div id="swl">${exListHtml(list.slice(0, 40), e => brandTag(e) + esc([e.equip, e.primary].filter(Boolean).join(' · ')))}</div>
     <button class="btn block" id="swAll" style="margin-top:6px">🔎 전체 목록에서 고르기</button>`, body => {
     $('#swl', body).onclick = e => { const b = e.target.closest('[data-id]'); if (b) onPick(b.dataset.id); };
@@ -1725,14 +1765,23 @@ function bindRoutineToday() {
 }
 // 설정: 내 헬스장 기구
 function gymCardHtml() {
-  const m = myBrands(), c = b => (window.BRAND_EX || []).filter(e => e.brand === b).length;
-  return `<div class="card" id="gymCard"><h3 style="margin:0 0 6px">🏢 내 헬스장 기구</h3>
-    <p class="muted small" style="margin:0 0 10px">고른 브랜드 기구가 운동 목록 앞쪽에 나오고, 추천 루틴도 그 기구로 맞춰요. 둘 다 고르면 위쪽이 먼저예요.</p>
-    ${Object.entries(window.BRANDS || {}).map(([k, n]) => `<label class="chk"><input type="checkbox" data-brand="${k}" ${m.includes(k) ? 'checked' : ''}> <b>${n}</b> <span class="muted small">${k === 'gym80' ? 'gym80 · 퓨어크라프트·시그넘' : 'Panatta · 프리웨이트 HP/스페셜·핏에보'} · ${c(k)}개</span></label>`).join('')}</div>`;
+  const m = myBrands(), c = b => (window.BRAND_EX || []).filter(e => e.brand === b).length, g = myGym();
+  return `<div class="card" id="gymCard"><h3 style="margin:0 0 6px">📍 내 헬스장</h3>
+    <select id="gymSel" aria-label="내 헬스장"><option value="">선택 안 함</option>${Object.values(window.GYMS || {}).map(x => `<option value="${x.id}" ${g && g.id === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
+    ${g ? `<p class="muted small" style="margin:8px 0 0">운동 목록·바꾸기에서 <b>${esc(g.rankKo.slice(0, 3).join(' → '))}</b> 순으로 먼저 보여 드려요. 추천 루틴에 <b>${esc(g.short)} 맞춤</b>이 생겨요.</p>
+    <button class="list-item" data-go="#/gym" style="margin-top:8px"><div><div class="t">🏋️ ${esc(g.short)} 기구 목록 · 출처</div><div class="s">확인 ${g.eq.filter(e => e.conf === 'ok').length}개 · 가능성 높음 ${g.eq.filter(e => e.conf === 'likely').length}개</div></div><span class="chev">›</span></button>` : `<p class="muted small" style="margin:8px 0 0">헬스장을 고르면 그곳 기구를 먼저 보여 드리고, 맞춤 루틴을 추천해요.</p>`}
+    <h3 style="margin:14px 0 6px">🏢 브랜드 기구</h3>
+    <p class="muted small" style="margin:0 0 10px">고른 브랜드 기구가 운동 목록 앞쪽에 나오고, 추천 루틴도 그 기구로 맞춰요. 둘 다 고르면 위쪽이 먼저예요.${g ? ' (내 헬스장을 고르면 헬스장 순서가 먼저예요)' : ''}</p>
+    ${Object.entries(window.BRANDS || {}).map(([k, n]) => `<label class="chk"><input type="checkbox" data-brand="${k}" ${m.includes(k) ? 'checked' : ''}> <b>${n}</b> <span class="muted small">${k === 'gym80' ? 'gym80 · 퓨어크라프트·시그넘' : 'Panatta · 프리웨이트 HP/스페셜/원·핏에보'} · ${c(k)}개</span></label>`).join('')}</div>`;
 }
 function bindGymCard() {
   const box = $('#gymCard'); if (!box) return;
+  box.querySelectorAll('[data-go]').forEach(x => x.onclick = () => go(x.dataset.go));
   box.onchange = e => {
+    if (e.target.id === 'gymSel') {
+      const v = e.target.value; if (v) db.profile.gym = v; else delete db.profile.gym;
+      save(); toast(v ? `${window.GYMS[v].short} 기구를 먼저 보여 드려요` : '내 헬스장을 껐어요'); return renderSettings();
+    }
     const k = e.target.dataset.brand; if (!k) return;
     const m = myBrands().filter(b => b !== k); if (e.target.checked) m.push(k);
     if (m.length) db.profile.gymBrands = m; else delete db.profile.gymBrands;
@@ -1740,10 +1789,25 @@ function bindGymCard() {
   };
 }
 
+// 내 헬스장 기구 목록 (출처 포함)
+function renderGym() {
+  const g = myGym() || (window.GYMS && window.GYMS.novis);
+  setTitle(`${g.short} 기구`);
+  const src = l => l.map(x => `<a href="${esc(x.u)}" target="_blank" rel="noopener">${esc(x.t)}</a>`).join('<br>');
+  const sec = (conf, h, sub) => `<h3 class="gym-h">${h}</h3><p class="muted small" style="margin:-4px 2px 8px">${sub}</p>` + g.eq.filter(e => e.conf === conf).map(e => `<div class="card gym-eq"><div class="rt-dh"><b>${esc(e.name)}</b><span class="tag ${conf === 'ok' ? 'ok' : 'likely'}">${conf === 'ok' ? '확인' : '가능성 높음'}</span></div>
+      <p class="small" style="margin:6px 0 0">${esc(e.what)}</p>${e.app && e.app !== '—' ? `<p class="small muted" style="margin:4px 0 0">앱에서: ${esc(e.app)}</p>` : ''}<p class="small gym-src">출처<br>${src(e.src)}</p></div>`).join('');
+  app.innerHTML = `<div class="card"><h3 style="margin:0">📍 ${esc(g.name)}</h3><p class="small" style="margin:6px 0 0">${esc(g.area)}<br>${esc(g.info)}</p><p class="small gym-src">출처<br>${src(g.infoSrc)}</p>
+      <p class="muted small" style="margin:8px 0 0">공개된 글·사진에서 찾은 것만 적었어요. <b>모델 이름까지 확인된 머신은 아직 없어요.</b> ${esc(g.note)}</p></div>
+    ${sec('ok', '✅ 확인된 기구', '글에 적혀 있거나 사진에 분명히 보여요')}
+    ${sec('likely', '🤔 가능성 높음', '사진·글로 보면 있을 것 같지만 확실하지 않아요')}
+    <button class="btn primary block" data-go="#/routine/tpl/novis4" style="min-height:52px;margin-top:6px">📋 노비스짐 맞춤 루틴 보기</button>`;
+  app.querySelectorAll('[data-go]').forEach(x => x.onclick = () => go(x.dataset.go));
+}
+
 // ───────── 시작
 route();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
-window.__fitlog = { get db() { return db; }, metrics, sessionsFor, isPlateau, plateauInfo, progRange, minInc, pct: (id, m) => pctValue(exById(id), m), nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods, filterEx, exById, keyMetrics, weeklySets, buildTpl, RT_TPL, pickSlot, swapCands, targetSets, normRoutine, myBrands };
+window.__fitlog = { get db() { return db; }, metrics, sessionsFor, isPlateau, plateauInfo, progRange, minInc, pct: (id, m) => pctValue(exById(id), m), nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods, filterEx, exById, keyMetrics, weeklySets, buildTpl, RT_TPL, pickSlot, swapCands, targetSets, normRoutine, myBrands, myGym, rtVisible, GYMS: window.GYMS };
 })();
