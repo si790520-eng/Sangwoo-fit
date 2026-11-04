@@ -168,3 +168,29 @@ details.guide summary{cursor:pointer;font-weight:700;font-size:14px}
 .breath{margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.25);font-size:14px}
 .bodymap{width:100%;max-width:360px;height:auto;display:block;margin:0 auto 6px}
 @media (prefers-reduced-motion: reduce){.form-play{display:none}}
+/* 브랜드 · 루틴 (v7) */
+.tag.brand{font-weight:700;margin:0 6px 2px 0}
+.tag.brand.gym80{background:rgba(251,146,60,.16);color:#fdba74}
+.tag.brand.panatta{background:rgba(96,165,250,.16);color:#93c5fd}
+.brand-card{border-color:rgba(251,191,36,.35)}
+.chk{display:flex;align-items:center;gap:8px;min-height:44px;padding:4px 2px;cursor:pointer}
+.chk input{width:22px;height:22px;accent-color:var(--accent)}
+.rt-dh{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.rt-dh h3{margin:0;font-size:16px}
+.rt-it{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:6px 8px;padding:10px 0;border-top:1px solid var(--line)}
+.rt-it:first-of-type{border-top:0}
+.rt-t{min-width:0;flex:1 1 100%}
+.rt-t a{color:inherit;font-weight:700;text-decoration:none}
+.rt-t .s{font-size:13px;color:var(--muted);margin-top:2px}
+.rt-ed{display:flex;gap:6px;flex:none;margin-left:auto}
+.rt-ed .mini{min-width:44px;min-height:38px;width:auto;padding:0 10px;font-size:15px}
+.rt-today{border-color:rgba(74,222,128,.35)}
+.rt-cta{border-style:dashed}
+.wk-row{display:grid;grid-template-columns:62px 1fr 74px;align-items:center;gap:8px;margin:5px 0;font-size:13px}
+.wk-bar{position:relative;height:12px;border-radius:6px;background:var(--card2);overflow:hidden}
+.wk-bar .band{position:absolute;top:0;bottom:0;background:rgba(74,222,128,.18)}
+.wk-bar b{position:absolute;left:0;top:2px;bottom:2px;border-radius:4px;background:var(--accent)}
+.wk-bar s{position:absolute;top:2px;bottom:2px;border-radius:4px;background:var(--accent);opacity:.4}
+.wk-v{text-align:right;font-weight:700}
+.wk-v em{font-style:normal;font-weight:400;font-size:11px;color:var(--muted)}
+.wk-v.low em{color:#fbbf24}.wk-v.high em{color:#f87171}
