@@ -194,3 +194,12 @@ details.guide summary{cursor:pointer;font-weight:700;font-size:14px}
 .wk-v{text-align:right;font-weight:700}
 .wk-v em{font-style:normal;font-weight:400;font-size:11px;color:var(--muted)}
 .wk-v.low em{color:#fbbf24}.wk-v.high em{color:#f87171}
+/* v8: 내 헬스장 */
+.rt-note{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.4}
+#gymSel{width:100%;min-height:48px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:0 12px;font-size:16px}
+.gym-h{margin:16px 2px 8px;font-size:16px}
+.gym-eq .tag{margin:0;white-space:nowrap}
+.tag.ok{background:rgba(34,197,94,.16);color:#86efac}
+.tag.likely{background:rgba(250,204,21,.16);color:#fde047}
+.gym-src{margin:6px 0 0;color:var(--muted);word-break:break-all}
+.gym-src a{color:var(--muted);text-decoration:underline}

@@ -29,10 +29,18 @@
 ## 브랜드 기구 출처
 `brands.js` — 모델명·모델 번호는 아래 자료에 실린 것만 썼어요. 동작·근육·자세 그림은 같은 동작의 기본 운동(`base`)을 그대로 써요.
 - **gym80** (Pure Kraft 23 · Sygnum 18): gym80 종합 브로슈어 2025 https://gym80.ch/wp-content/uploads/2026/08/GESAMTBROSCHUeRE-WEB-2025-GESAMT.pdf , 기구 특징은 gym80.de 제품 페이지(4311 Lat Pulldown Dual, 4159N Hacksquat)
-- **Panatta** (Freeweight HP 12 · Freeweight Special 16 · Fit Evo 19): 공식 사이트 https://www.panattasport.com/en/free-weight-special/ (Super High Row 1FW003, Super Pendulum Squat 특징), Freeweight HP 카탈로그(PDF), 공식 판매처 목록 https://panattafitness.com/product-category/fit-evo/ · /freeweight-hp/ 및 사이트 검색(Freeweight Special 모델 번호)
+- **Panatta** (Freeweight HP 12 · Freeweight Special 16 · Fit Evo 19 · Freeweight One 13): 공식 사이트 https://www.panattasport.com/en/free-weight-special/ (Super High Row 1FW003, Super Pendulum Squat 특징), Freeweight HP 카탈로그(PDF), 공식 판매처 목록 https://panattafitness.com/product-category/fit-evo/ · /freeweight-hp/ 및 사이트 검색(Freeweight Special 모델 번호)
 - 플레이트 장착식(퓨어크라프트·프리웨이트 HP/스페셜)은 증량 5kg, 핀 머신(시그넘·핏에보)은 기본 운동의 증량 단위(최소 5kg 규칙 동일).
 - 상위 %는 같은 종류 기구 표가 맞을 때만(주로 핀 머신, 레그프레스 45°·핵스쿼트·티바로우·시티드 카프) 기본 운동 표를 써요. 플레이트 상체 머신·펜듈럼 등은 표시하지 않아요.
+- Freeweight One(신형 FO 라인, 1FO…): 판매처 목록 https://panattafitness.com/product-category/freeweight-one/ (17종 중 기본 운동과 1:1로 맞는 13종. Power Row·Rowing Machine·Shrug·French Press는 제외)
 - 80Classics·Monolith·SEC·XUL 등은 이번에 넣지 않았어요.
+
+## 내 헬스장: 노비스짐 교동점 (`gyms.js`)
+공개된 글·사진에서 찾은 것만 넣었어요. 모델 이름까지 확인된 머신은 없어요.
+- 확인: 짐80 오피셜 센터(짐80코리아 오피셜센터 목록 https://gym80.co.kr/bbs/search.php?stx=노비스짐 , 당근 프로필), 부티빌더 오피셜 센터, 테르주·너틸러스·온힘 보유(당근 지점 안내 이미지 2026-02-04), 프리웨이트존(랙·바벨·원판·덤벨·조절 벤치, 당근 사진 2026-01-09), 러닝머신·자전거
+- 가능성 높음: 스미스머신·케이블 타워(사진), 파나타 신형 Freeweight One(“교동점 입고 예정” 이미지 + “1차 7대 입고 완료” 글, 지점·모델 표시 없음)
+- 당근 프로필: https://www.daangn.com/kr/local-profile/%EB%85%B8%EB%B9%84%EC%8A%A4%EC%A7%90-%EA%B5%90%EB%8F%99%EC%A0%90-pp5sv4nj2otr/
+- 루틴 `novis4`·`novis5`: 확인된 프리웨이트·덤벨과 가능성 높은 케이블·스미스 위주. 확인 안 된 머신(레그컬·레그익스텐션 등)은 💡 메모로 대체 동작을 적었어요.
 
 ## 루틴 근거
 - 주간 세트: Schoenfeld BJ, Ogborn D, Krieger JW. J Sports Sci 2017;35(11):1073–1082. doi:10.1080/02640414.2016.1210197 (주 10세트 이상 > 그보다 적은 세트). 20세트 상한은 일반적인 코칭 범위.

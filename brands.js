@@ -7,6 +7,7 @@ const SRC = {
   hp: 'Panatta Freeweight HP 카탈로그 · panattafitness.com(파나타 공식 판매처) 목록',
   fws: 'panattasport.com Freeweight Special · panattafitness.com 목록',
   fe: 'panattafitness.com Fit Evo 목록 (파나타 공식 판매처)',
+  fo: 'panattafitness.com Freeweight One 목록 (파나타 공식 판매처, 2026-11 확인)',
 };
 const SERIES = {
   pk: { brand: 'gym80', bk: '짐80', sk: '퓨어크라프트', se: 'Pure Kraft', plate: true, src: SRC.gym80, aka: '짐80 짐팔공 gym80 퓨어크라프트 퓨어크래프트 퓨크 purekraft' },
@@ -14,6 +15,7 @@ const SERIES = {
   hp: { brand: 'panatta', bk: '파나타', sk: '프리웨이트 HP', se: 'Freeweight HP', plate: true, src: SRC.hp, aka: '파나타 panatta 프리웨이트 HP freeweight' },
   fs: { brand: 'panatta', bk: '파나타', sk: '프리웨이트 스페셜', se: 'Freeweight Special', plate: true, src: SRC.fws, aka: '파나타 panatta 프리웨이트 스페셜 freeweight special' },
   fe: { brand: 'panatta', bk: '파나타', sk: '핏에보', se: 'Fit Evo', plate: false, src: SRC.fe, aka: '파나타 panatta 핏에보 핏이보 fitevo' },
+  fo: { brand: 'panatta', bk: '파나타', sk: '프리웨이트 원', se: 'Freeweight One', plate: true, src: SRC.fo, aka: '파나타 panatta 프리웨이트원 freeweightone fo 신형 FO라인' },
 };
 // [시리즈, 모델 번호, 영어 모델명(제조사 표기), 기본 운동 id, 한글 이름, 상위% 표 사용(1/0), 확인된 기구 특징]
 const N = {
@@ -113,6 +115,20 @@ const R = [
   ['fe', '1FE039', 'Pullover Machine', 'pullover_machine', '풀오버 머신', 0],
   ['fe', '1FE089', 'Calf Machine', 'calf_raise', '카프 머신', 1],
   ['fe', '1FE065', 'Upper Abdominal', 'ab_crunch_machine', '어퍼 앱도미널 (크런치)', 0],
+  // ── 파나타 프리웨이트 원 (신형 FO 라인, 플레이트) — 판매처 목록 17종 중 기본 운동과 1:1로 맞는 것만
+  ['fo', '1FO036', 'Vertical Chest Press', 'machine_bench', '버티컬 체스트프레스', 0],
+  ['fo', '1FO035', 'Inclined Chest Press', 'incline_machine_press', '인클라인 체스트프레스', 0],
+  ['fo', '1FO001', 'Lat Machine Convergent', 'iso_lat_pulldown', '랫머신 컨버전트 (랫풀다운)', 0],
+  ['fo', '1FO002', 'Low Row', 'low_row', '로우 로우', 0],
+  ['fo', '1FO003', 'High Row', 'high_row', '하이 로우', 0],
+  ['fo', '1FO025', 'Deltoid Press', 'hs_shoulder_press', '델토이드 프레스 (숄더프레스)', 0],
+  ['fo', '1FO027', 'Lateral Deltoids', 'machine_lateral', '레터럴 델토이드 (사레레)', 0],
+  ['fo', '1FO026', 'Back Deltoids', 'rear_delt', '백 델토이드 (리어델트)', 0],
+  ['fo', '1FO080', 'Pendulum Squat', 'pendulum_squat', '펜듈럼 스쿼트', 0],
+  ['fo', '1FO086', 'Leg press 45°', 'leg_press', '45도 레그프레스', 1],
+  ['fo', '1FO181', 'Leg Extension', 'leg_ext', '레그익스텐션', 0],
+  ['fo', '1FO183', 'Seated Leg Curling', 'seated_leg_curl', '시티드 레그컬', 0],
+  ['fo', '1FO151', 'Curling Machine', 'machine_preacher', '컬링 머신 (이두)', 0],
 ];
 const base = id => window.EXERCISES.find(e => e.id === id);
 const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
