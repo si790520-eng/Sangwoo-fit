@@ -52,7 +52,7 @@
   function it(o) { return Object.assign({ size: "", volume: "", photoId: "" }, o); }
 
   const SEED = [
-    it({ id: "o-captain", brand: "캡틴선샤인", name: "코트", category: "outer", subtype: "coat", color: "#C4A574", seasons: ["fall", "winter", "spring"] }),
+    it({ id: "o-captain", brand: "캡틴선샤인", name: "트래블러 코트", category: "outer", subtype: "coat", color: "#2B3A55", seasons: ["fall", "winter", "spring"] }),
     it({ id: "o-bal", brand: "에잇세컨즈", name: "발마칸 코트", category: "outer", subtype: "balmacaan", color: "#3C3F44", seasons: FW }),
     it({ id: "o-leather", brand: "도프제이슨", name: "가죽자켓", category: "outer", subtype: "leather", color: "#1A1A1A", seasons: ["spring", "fall", "winter"] }),
     it({ id: "o-fc", brand: "풀카운트", name: "다트포드", category: "outer", subtype: "denimjacket", color: "#1A1C22", seasons: SF }),
@@ -88,6 +88,7 @@
     it({ id: "b-ash", brand: "인코텍스", name: "애쉬 치노", category: "bottom", subtype: "chino", color: "#B0ADA6", seasons: ALL }),
     it({ id: "b-beige", brand: "바스통", name: "베이지 치노", category: "bottom", subtype: "chino", color: "#CDB892", seasons: ALL }),
     it({ id: "b-wideind", brand: "오라리", name: "와이드 데님", category: "bottom", subtype: "wide", color: "#2A3F66", seasons: ALL, volume: "big" }),
+    it({ id: "b-auralee-straight", brand: "오라리", name: "하드트위스트 5P 스트레이트 데님", category: "bottom", subtype: "straight", color: "#2E3E5C", seasons: SFW, size: "30" }),
     it({ id: "b-568", brand: "리바이스", name: "568", category: "bottom", subtype: "straight", color: "#4E74A8", seasons: ALL }),
     it({ id: "b-wideblk", brand: "아워데이즈", name: "웨이비 커브드 와이드 데님", category: "bottom", subtype: "curved", color: "#1A1A1A", seasons: ALL, size: "L", volume: "big" }),
     it({ id: "b-semi", brand: "워크온바디오프", name: "릴렉스 세미 와이드 데님", category: "bottom", subtype: "semi", color: "#222222", seasons: ALL, size: "M" }),
@@ -110,10 +111,10 @@
   }
 
   const COACH = [
-    look("c01", "spring", "date", "카멜 코트와 베이지", ["o-captain", "k-beige", "s-white", "b-beige", "f-rw", "a-belt"],
+    look("c01", "spring", "date", "네이비 코트와 베이지", ["o-captain", "k-beige", "s-white", "b-beige", "f-rw", "a-belt"],
       { tuck: true, outerOpen: true, hemRoll: true }, [
         "롱코트는 위만 잠그고 베이지 니트가 보이게 열어 두세요.",
-        "베이지끼리라 앰버 부츠가 대비를 만들어 줘요.",
+        "네이비 코트 안 베이지 톤에 앰버 부츠가 따뜻함을 더해 줘요.",
         "부츠면 치노 밑단은 한 단만 접어 발목을 보여 주세요."
       ]),
     look("c02", "spring", "date", "가죽자켓과 애쉬 치노", ["o-leather", "s-white", "b-ash", "f-derby", "a-belt"],
@@ -202,10 +203,10 @@
         "소매가 넓으면 한 번만 접으세요."
       ]),
 
-    look("c16", "fall", "date", "카멜 코트와 네이비", ["o-captain", "k-navy", "s-white", "b-ash", "f-derby", "a-belt"],
+    look("c16", "fall", "date", "네이비 코트, 네이비 니트", ["o-captain", "k-navy", "s-white", "b-ash", "f-derby", "a-belt"],
       { tuck: true, outerOpen: true, hemRoll: true }, [
         "코트는 열고 네이비 니트와 셔츠 깃을 같이 보여 주세요.",
-        "카멜·네이비·애쉬, 세 색 안에서 끝내면 정돈돼요.",
+        "네이비 톤온톤에 화이트 셔츠, 애쉬 치노로 끝내면 정돈돼요.",
         "더비에는 치노를 한 단 접으세요."
       ]),
     look("c17", "fall", "date", "차콜 발마칸", ["o-bal", "k-beige", "b-beige", "f-rw", "a-belt"],
@@ -302,7 +303,7 @@
     look("c32", "winter", "casual", "롱코트와 그레이 후드", ["o-captain", "h-rl", "b-ash", "f-991"],
       { tuck: false, outerOpen: true, hemRoll: false }, [
         "롱코트 안에 후드는 모자만 칼라로 꺼내세요.",
-        "그레이·애쉬·카멜은 저채도라 색을 더하지 마세요.",
+        "네이비·그레이·애쉬는 저채도라 색을 더하지 마세요.",
         "스니커즈라 치노는 접지 않는 게 맞아요."
       ])
   ];
