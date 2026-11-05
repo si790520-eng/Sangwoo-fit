@@ -69,12 +69,86 @@
     return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
   }
 
+  const CAPTAIN_ID = "o-captain";
+  const CAPTAIN_CAMEL = "#c4a574";
+  const CAPTAIN_NAVY = "#2B3A55";
+  const CAPTAIN_NAME = "트래블러 코트";
+  const AURALEE_ID = "b-auralee-straight";
+  const MIGRATE_META = "migrate-captain-navy";
+  const MIGRATE_FLAG = "closet.migrate.captain-navy";
+
+  function isCamelCaptain(item) {
+    return String(item && item.color || "").trim().toLowerCase() === CAPTAIN_CAMEL;
+  }
+
+  async function migrationDone(source) {
+    if (DB.ok && source !== "mirror") {
+      const meta = await DB.get("meta", MIGRATE_META);
+      return !!meta;
+    }
+    try {
+      return localStorage.getItem(MIGRATE_FLAG) === "1";
+    } catch (err) {
+      return false;
+    }
+  }
+
+  async function markMigrationDone() {
+    try {
+      localStorage.setItem(MIGRATE_FLAG, "1");
+    } catch (err) { /* 플래그는 없어도 다음 로드에 다시 판단 */ }
+    if (DB.ok) await DB.put("meta", { id: MIGRATE_META, at: Date.now() }, MIGRATE_META);
+  }
+
+  function migrationMirrorSaved() {
+    const mirror = DB.readMirror();
+    const stored = (mirror && mirror.items) || [];
+    const captain = state.items.find((it) => it && it.id === CAPTAIN_ID);
+    if (captain) {
+      const row = stored.find((it) => it && it.id === CAPTAIN_ID);
+      if (!row || String(row.color || "").trim().toLowerCase() !== String(captain.color || "").trim().toLowerCase() || row.name !== captain.name) return false;
+    }
+    if (state.items.some((it) => it && it.id === AURALEE_ID)) {
+      if (!stored.some((it) => it && it.id === AURALEE_ID)) return false;
+    }
+    return true;
+  }
+
+  /* 이미 저장된 옷장: 카멜 o-captain 만 네이비로 고치고, 없는 오라리 스트레이트만 하나 넣는다. */
+  async function migrateStoredCloset(items, source) {
+    if (await migrationDone(source)) return false;
+    let changed = false;
+    const captain = items.find((it) => it && it.id === CAPTAIN_ID);
+    if (captain && isCamelCaptain(captain)) {
+      captain.color = CAPTAIN_NAVY;
+      captain.name = CAPTAIN_NAME;
+      if (DB.ok) await DB.put("items", captain);
+      changed = true;
+    }
+    if (!items.some((it) => it && it.id === AURALEE_ID)) {
+      const seed = Data.SEED.find((it) => it.id === AURALEE_ID);
+      if (seed) {
+        const item = Object.assign({ createdAt: Date.now() }, seed);
+        items.push(item);
+        if (DB.ok) await DB.put("items", item);
+        changed = true;
+      }
+    }
+    if (!changed) {
+      await markMigrationDone();
+      return false;
+    }
+    return true;
+  }
+
   async function init() {
     await DB.init();
     let items = DB.ok ? await DB.all("items") : [];
     let outfits = DB.ok ? await DB.all("outfits") : [];
     const mirror = DB.readMirror();
+    let source = "idb";
     if (!items.length && mirror && mirror.items && mirror.items.length) {
+      source = "mirror";
       items = mirror.items;
       outfits = mirror.outfits || [];
       if (DB.ok) {
@@ -83,6 +157,7 @@
       }
     }
     if (!items.length) {
+      source = "seed";
       items = Data.SEED.map((it) => Object.assign({ createdAt: Date.now() }, it));
       if (DB.ok) {
         for (const it of items) await DB.put("items", it);
@@ -96,6 +171,11 @@
         slots: Object.assign(emptyLook().slots, mirror.look.slots),
         toggles: Object.assign(emptyLook().toggles, mirror.look.toggles || {})
       };
+    }
+    const migrated = await migrateStoredCloset(state.items, source);
+    if (migrated) {
+      persistMirror();
+      if (DB.ok || migrationMirrorSaved()) await markMigrationDone();
     }
     await hydratePhotos();
     state.ready = true;
