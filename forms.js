@@ -6,7 +6,7 @@
 'use strict';
 const R = Math.PI / 180;
 const LEN = { torso: 54, neck: 5, head: 11, thigh: 46, shin: 44, foot: 15, ua: 31, fa: 27 };
-const C = { body: '#dfe6f0', bodyEdge: '#0f1115', far: '#8792a6', eq: '#5b6578', eqHi: '#8a94a7', eqDark: '#3a414f', hi: '#fb923c', hi2: '#fdba74', path: '#4ade80', ground: '#2b303b', mark: '#4ade80' };
+const C = { body: '#e2ae8c', bodyEdge: '#5a3d30', far: '#c49072', eq: '#5b6578', eqHi: '#9aa4b8', eqDark: '#3a414f', hi: '#fb923c', hi2: '#fdba74', path: '#4ade80', ground: '#2b303b', mark: '#4ade80', shirt: '#1c5a7a', shirtFar: '#164860', shirtDark: '#0f3a50', shorts: '#2c3446', shortsFar: '#232a39', shoe: '#1c2230', shoeSole: '#0e1218', hair: '#3c2a1e' };
 const GY = 200;
 const f1 = n => Math.round(n * 10) / 10;
 const P = p => `${f1(p[0])},${f1(p[1])}`;
@@ -159,57 +159,108 @@ function frontHi(J, m, col, back) {
   return m.filter(k => T[k]).map(k => T[k]()).join('');
 }
 
+function musLimb(a, b, wA, wMid, wB) {
+  const d = nrm(sub(b, a)), p = [-d[1], d[0]];
+  const mid = add(a, sub(b, a), 0.42);
+  return smooth([
+    add(a, p, wA / 2), add(mid, p, wMid / 2), add(b, p, wB / 2),
+    add(b, p, -wB / 2), add(mid, p, -wMid / 2), add(a, p, -wA / 2)
+  ]);
+}
 // ───────── 사람 그리기 (옆모습)
 function drawSide(J, hiP, hiS) {
   const u = J._u, n = J._n, H = J.hip, S = J.shoulder;
   const far = [], near = [];
   const limb = (arr, s, col, edge) => {
-    arr.push(path(capsule(J.hip, J['knee' + s], 17, 12), col, edge));
-    arr.push(path(capsule(J['knee' + s], J['ankle' + s], 12, 7.5), col, edge));
-    arr.push(path(capsule(J['ankle' + s], J['toe' + s], 7, 5), col, edge));
+    arr.push(path(musLimb(H, J['knee' + s], 15, 20, 12), col, edge));
+    arr.push(path(musLimb(J['knee' + s], J['ankle' + s], 11.5, 14, 7.5), col, edge));
+    arr.push(path(capsule(J['ankle' + s], J['toe' + s], 9, 6.5), C.shoe, edge));
+    arr.push(path(capsule(add(J['ankle' + s], [0, 2.2]), add(J['toe' + s], [0, 1.2]), 4.6, 3.4), C.shoeSole));
   };
   const arm = (arr, s, col, edge) => {
-    arr.push(path(capsule(S, J['elbow' + s], 11, 8.5), col, edge));
-    arr.push(path(capsule(J['elbow' + s], J['wrist' + s], 8.5, 6), col, edge));
-    arr.push(`<circle cx="${f1(J['hand' + s][0])}" cy="${f1(J['hand' + s][1])}" r="4.2" fill="${col}"${edge}/>`);
+    arr.push(path(musLimb(S, J['elbow' + s], 11.5, 13.5, 8.5), col, edge));
+    arr.push(path(musLimb(J['elbow' + s], J['wrist' + s], 8.2, 9.2, 6), col, edge));
+    arr.push(`<circle cx="${f1(J['hand' + s][0])}" cy="${f1(J['hand' + s][1])}" r="4.3" fill="${col}"${edge}/>`);
   };
+  const sleeve = (s, col) => path(capsule(S, add(S, sub(J['elbow' + s], S), 0.34), 13.5, 12.5), col);
   limb(far, 'F', C.far, ''); arm(far, 'F', C.far, '');
   const T = [add(add(H, n, 10), u, -3), add(add(H, n, 10.5), u, 22), add(add(S, n, 13.5), u, -17), add(add(S, n, 11), u, -4), add(add(S, n, 4), u, 6), add(add(S, n, -6), u, 4),
     add(add(S, n, -11.5), u, -10), add(add(H, n, -9.5), u, 26), add(add(H, n, -13.5), u, 6), add(add(H, n, -7), u, -8), add(add(H, n, 4), u, -9)];
-  const torso = path(smooth(T), C.body, EDGE);
-  const neck = path(capsule(add(S, u, 2), add(J.head, J._hu, -LEN.head + 2), 9, 8), C.body);
-  const head = `<circle cx="${f1(J.head[0])}" cy="${f1(J.head[1])}" r="${LEN.head}" fill="${C.body}"${EDGE}/>`;
+  const torso = path(smooth(T), C.shirt, EDGE);
+  const shadeT = [add(add(S, n, -1), u, 2), add(add(S, n, -11.5), u, -10), add(add(H, n, -9.5), u, 26), add(add(H, n, -13.5), u, 6), add(add(H, n, -4), u, -4), add(add(S, n, -1), u, -8)];
+  const torsoShade = path(smooth(shadeT), C.shirtDark, ' opacity=".28"');
+  const neck = path(capsule(add(S, u, 2), add(J.head, J._hu, -LEN.head + 2), 8.4, 7.4), C.body);
   const hn = [Math.cos((J._p.tr + J._p.hd) * R), Math.sin((J._p.tr + J._p.hd) * R)];
-  const eye = add(add(J.head, hn, 6), J._hu, 1.5);
+  const hd = J.head, hr = LEN.head;
+  const head = `<ellipse cx="${f1(hd[0])}" cy="${f1(hd[1])}" rx="${hr - 0.3}" ry="${hr + 1.3}" transform="rotate(${f1(J._p.tr + J._p.hd)} ${f1(hd[0])} ${f1(hd[1])})" fill="${C.body}"${EDGE}/>`;
+  const hair = path(smooth([
+    add(add(hd, J._hu, -hr + 1), hn, -3),
+    add(add(hd, J._hu, -hr - 0.4), hn, 5),
+    add(add(hd, J._hu, 1), hn, 7.2),
+    add(add(hd, J._hu, 6), hn, 0.5),
+    add(add(hd, J._hu, 3), hn, -8),
+    add(add(hd, J._hu, -5), hn, -8.6)
+  ]), C.hair);
+  const earP = add(add(hd, hn, -5), J._hu, 1);
+  const ear = `<ellipse cx="${f1(earP[0])}" cy="${f1(earP[1])}" rx="2.1" ry="3.1" fill="${C.body}"${EDGE}/>`;
+  const eye = add(add(hd, hn, 6), J._hu, 1.5);
+  const nose = add(add(hd, hn, 8.4), J._hu, -0.8);
+  const shortsFar = path(capsule(H, add(H, sub(J.kneeF, H), 0.38), 18, 16), C.shortsFar);
+  const shortsNear = path(capsule(H, add(H, sub(J.kneeN, H), 0.38), 19, 16.5), C.shorts);
+  const hipShorts = path(smooth([
+    add(add(H, n, 11), u, 10), add(add(H, n, 12), u, -1), add(add(H, n, 6), u, -10),
+    add(add(H, n, -8), u, -9), add(add(H, n, -13), u, 5), add(add(H, n, -6), u, 12)
+  ]), C.shorts);
   limb(near, 'N', C.body, EDGE); arm(near, 'N', C.body, EDGE);
   const hi = (hiS.length ? sideHi(J, hiS, C.hi2) : '') + sideHi(J, hiP, C.hi);
-  // 근육 표시는 몸통/다리 위, 팔(가까운 쪽) 아래로 — 팔 근육은 팔 위에 다시 표시
   const armHi = ['biceps', 'triceps', 'forearm', 'frontDelt', 'sideDelt', 'rearDelt'];
   const hiArm = sideHi(J, hiS.filter(k => armHi.includes(k)), C.hi2) + sideHi(J, hiP.filter(k => armHi.includes(k)), C.hi);
-  const legNear = near.slice(0, 3).join(''), armNear = near.slice(3).join('');
-  return `<g class="fig">${far.join('')}${neck}${torso}${head}<circle cx="${f1(eye[0])}" cy="${f1(eye[1])}" r="1.6" fill="#0f1115"/>${legNear}${hi}${armNear}${hiArm}</g>`;
+  const legNear = near.slice(0, 4).join(''), armNear = near.slice(4).join('');
+  return `<g class="fig">${far.join('')}${shortsFar}${sleeve('F', C.shirtFar)}${neck}${torso}${torsoShade}${hipShorts}${head}${hair}${ear}<circle cx="${f1(eye[0])}" cy="${f1(eye[1])}" r="1.55" fill="#2a1c16"/><circle cx="${f1(nose[0])}" cy="${f1(nose[1])}" r="1.05" fill="${C.far}"/>${legNear}${shortsNear}${hi}${armNear}${sleeve('N', C.shirt)}${hiArm}</g>`;
 }
 // ───────── 사람 그리기 (앞/뒤모습)
 function drawFront(J, hiP, hiS, back) {
   const lu = J._lu, lr = J._lr, ch = J.chest, H = J.hip, tl = J._p.tl, dn = [-lu[0], -lu[1]], Z = J._z;
   const pts = s => [add(add(ch, lr, s * 7), dn, -4), add(add(ch, lr, s * 19), dn, -1 - J._p.shr), add(add(ch, lr, s * 22), dn, 6), add(add(ch, lr, s * 17), dn, 20 * tl), add(add(H, lr, s * 14), dn, -18 * tl), add(add(H, lr, s * 16), dn, 2), add(add(H, lr, s * 9), dn, 9)];
   const L = pts(-1), Rr = pts(1).reverse();
-  const torso = path(smooth([...L, add(H, dn, 8), ...Rr]), C.body, EDGE);
-  const neck = path(capsule(add(ch, dn, 2), add(J.head, dn, -6), 11, 10), C.body);
-  const head = `<circle cx="${f1(J.head[0])}" cy="${f1(J.head[1])}" r="${LEN.head}" fill="${C.body}"${EDGE}/>`;
+  const torso = path(smooth([...L, add(H, dn, 8), ...Rr]), C.shirt, EDGE);
+  const pecs = back ? '' : [-1, 1].map(s => {
+    const c = add(add(ch, lr, s * 9), dn, 10 * tl);
+    return `<ellipse cx="${f1(c[0])}" cy="${f1(c[1])}" rx="8" ry="${f1(6 * tl)}" fill="${C.shirtDark}" opacity=".22"/>`;
+  }).join('');
+  const abs = back ? '' : `<path d="M${P(add(ch, dn, 16 * tl))}L${P(add(H, dn, -4))}" stroke="${C.shirtDark}" stroke-width="1" opacity=".22"/>` +
+    [-1, 1].map(s => `<path d="M${P(add(add(ch, lr, s * 5), dn, 20 * tl))}L${P(add(add(H, lr, s * 5), dn, -6))}" stroke="${C.shirtDark}" stroke-width="0.8" opacity=".16"/>`).join('');
+  const collar = path(smooth([add(ch, dn, -5), add(add(ch, lr, -8), dn, 2), add(ch, dn, 8), add(add(ch, lr, 8), dn, 2)]), C.body);
+  const neck = path(capsule(add(ch, dn, 2), add(J.head, dn, -6), 10, 9), C.body);
+  const hd = J.head;
+  const head = `<ellipse cx="${f1(hd[0])}" cy="${f1(hd[1])}" rx="${LEN.head - 0.2}" ry="${LEN.head + 1.3}" fill="${C.body}"${EDGE}/>`;
+  const hair = `<ellipse cx="${f1(hd[0])}" cy="${f1(add(hd, dn, -3.2)[1])}" rx="${LEN.head - 0.5}" ry="${LEN.head - 1.2}" fill="${C.hair}"/>`;
+  const eyes = [-1, 1].map(s => {
+    const p = add(add(hd, lr, s * 4), dn, 1);
+    return `<circle cx="${f1(p[0])}" cy="${f1(p[1])}" r="1.45" fill="#2a1c16"/>`;
+  }).join('');
   const items = [];
   const zOf = k => (back ? -1 : 1) * (Z[k] || 0);
   ['L', 'R'].forEach(s => {
-    items.push({ z: zOf('knee' + s) * 0.5 - 0.01, d: path(capsule(J['hipJ' + s], J['knee' + s], 16, 12), C.body, EDGE) });
-    items.push({ z: (zOf('knee' + s) + zOf('ankle' + s)) * 0.5 - 0.02, d: path(capsule(J['knee' + s], J['ankle' + s], 12, 7.5), C.body, EDGE) + path(capsule(J['ankle' + s], J['toe' + s], 8, 7), C.body, EDGE) });
-    items.push({ z: zOf('elbow' + s) * 0.5 + 0.001, d: path(capsule(J['shoulder' + s], J['elbow' + s], 11.5, 8.5), C.body, EDGE), arm: s });
-    items.push({ z: (zOf('elbow' + s) + zOf('wrist' + s)) * 0.5 + 0.002, d: path(capsule(J['elbow' + s], J['wrist' + s], 8.5, 6), C.body, EDGE) + `<circle cx="${f1(J['hand' + s][0])}" cy="${f1(J['hand' + s][1])}" r="4.3" fill="${C.body}"${EDGE}/>` });
+    items.push({ z: zOf('knee' + s) * 0.5 - 0.01, d: path(musLimb(J['hipJ' + s], J['knee' + s], 15, 18, 12), C.body, EDGE) });
+    items.push({ z: (zOf('knee' + s) + zOf('ankle' + s)) * 0.5 - 0.02, d: path(musLimb(J['knee' + s], J['ankle' + s], 11.5, 13.5, 7.5), C.body, EDGE) + path(capsule(J['ankle' + s], J['toe' + s], 8.5, 7), C.shoe, EDGE) });
+    items.push({ z: zOf('elbow' + s) * 0.5 + 0.001, d: path(musLimb(J['shoulder' + s], J['elbow' + s], 11.5, 13, 8.5), C.body, EDGE), arm: s });
+    items.push({ z: (zOf('elbow' + s) + zOf('wrist' + s)) * 0.5 + 0.002, d: path(musLimb(J['elbow' + s], J['wrist' + s], 8.5, 9, 6), C.body, EDGE) + `<circle cx="${f1(J['hand' + s][0])}" cy="${f1(J['hand' + s][1])}" r="4.3" fill="${C.body}"${EDGE}/>` });
   });
+  const shorts = path(smooth([
+    add(add(H, lr, -16), dn, 4), add(add(H, lr, -15), dn, -14),
+    add(add(H, lr, -6), dn, -16), add(add(H, lr, 6), dn, -16),
+    add(add(H, lr, 15), dn, -14), add(add(H, lr, 16), dn, 4),
+    add(H, dn, 10)
+  ]), C.shorts);
+  const slv = s => path(capsule(J['shoulder' + s], add(J['shoulder' + s], sub(J['elbow' + s], J['shoulder' + s]), 0.32), 13, 12), C.shirt);
   const behind = items.filter(i => i.z < -0.05), front = items.filter(i => i.z >= -0.05).sort((a, b) => a.z - b.z);
   const legs = front.filter(i => !('arm' in i) && i.z < 0.3), rest = front.filter(i => !legs.includes(i));
   const hi = (hiS.length ? frontHi(J, hiS, C.hi2, back) : '') + frontHi(J, hiP, C.hi, back);
-  const spine = back ? `<path d="M${P(add(ch, dn, 2))}L${P(add(H, dn, -6))}" stroke="#9aa6b8" stroke-width="1.2" fill="none" stroke-dasharray="2 3"/>` : '';
-  return `<g class="fig">${behind.map(i => i.d).join('')}${neck}${torso}${head}${legs.map(i => i.d).join('')}${hi}${spine}${rest.map(i => i.d).join('')}</g>`;
+  const armHi = ['biceps', 'triceps', 'forearm', 'frontDelt', 'sideDelt', 'rearDelt'];
+  const hiArm = frontHi(J, hiS.filter(k => armHi.includes(k)), C.hi2, back) + frontHi(J, hiP.filter(k => armHi.includes(k)), C.hi, back);
+  const spine = back ? `<path d="M${P(add(ch, dn, 2))}L${P(add(H, dn, -6))}" stroke="#1a3344" stroke-width="1.2" fill="none" stroke-dasharray="2 3" opacity=".45"/>` : '';
+  return `<g class="fig">${behind.map(i => i.d).join('')}${neck}${torso}${pecs}${abs}${collar}${head}${hair}${eyes}${legs.map(i => i.d).join('')}${shorts}${hi}${spine}${rest.map(i => i.d).join('')}${slv('L')}${slv('R')}${hiArm}</g>`;
 }
 
 window.FORM_ENGINE = { R, LEN, C, GY, f1, P, add, sub, len, nrm, dirD, angOf, lerp, ik, sideJ, frontJ, capsule, smooth, path, drawSide, drawFront, sideHi, frontHi };
@@ -228,12 +279,18 @@ function eqSide(it, J) {
   switch (it.t) {
     case 'line': return ln(it.p, it.w || 6, it.c || C.eq, it.dash ? ` stroke-dasharray="${it.dash}"` : '');
     case 'rect': return `<rect x="${it.x}" y="${it.y}" width="${it.w}" height="${it.h}" rx="${it.r ?? 4}" fill="${it.c || C.eq}"/>`;
-    case 'bench': { const a = it.a, b = it.b, legs = (it.legs || [a, b]).map(p => ln([p, [p[0], GY]], 5, C.eqDark)).join(''); return legs + ln([a, b], it.w || 10, it.c || C.eq); }
+    case 'bench': { const a = it.a, b = it.b;
+      const legs = (it.legs || [a, b]).map(p => ln([p, [p[0], GY]], 5, C.eqDark) + `<rect x="${f1(p[0] - 5)}" y="${GY - 5}" width="10" height="5" rx="1.5" fill="#2a303c"/>`).join('');
+      return legs + ln([a, b], (it.w || 10) + 4, '#4a5568') + ln([a, b], it.w || 10, it.c || '#7b879c'); }
     case 'stack': { let s = `<rect x="${it.x}" y="${it.y}" width="${it.w}" height="${it.h}" rx="3" fill="${C.eqDark}"/>`; for (let y = it.y + 6; y < it.y + it.h - 2; y += 7) s += `<rect x="${it.x + 3}" y="${y}" width="${it.w - 6}" height="5" rx="1.5" fill="${C.eq}"/>`; return s; }
     case 'torsopad': { const H = J.hip; const a = add(add(H, u, it.a), n, it.off), b = add(add(H, u, it.b), n, it.off); return ln([a, b], it.w || 10, it.c || C.eq); }
     case 'roller': return circ(jp(J, it.j, it.off), it.r || 6.5, it.c || C.eq);
-    case 'bar': { const p = jp(J, it.j || 'handN', it.off); return circ(p, it.r || 15, C.eqDark, ` stroke="${C.eqHi}" stroke-width="2.5"`) + circ(p, 4, C.eqHi); }
-    case 'db': { const p = jp(J, it.j || 'handN', it.off); return circ(p, it.r || 7, C.eqDark, ` stroke="${C.eqHi}" stroke-width="2"`); }
+    case 'bar': { const p = jp(J, it.j || 'handN', it.off), r = it.r || 15;
+      return circ(p, r, '#3d4554', ` stroke="${C.eqHi}" stroke-width="2"`) + circ(p, r * 0.74, '#4a5466') + circ(p, r * 0.5, '#323846', ` stroke="${C.eqHi}" stroke-width="1"`) + circ(p, 3.2, C.eqHi); }
+    case 'db': { const p = jp(J, it.j || 'handN', it.off), r = it.r || 7;
+      return ln([add(p, [-r - 3, 0]), add(p, [r + 3, 0])], 3.2, C.eqHi)
+        + `<rect x="${f1(p[0] - r - 5)}" y="${f1(p[1] - r)}" width="${f1(r * 0.85)}" height="${f1(r * 2)}" rx="2" fill="${C.eqDark}" stroke="${C.eqHi}" stroke-width="1.3"/>`
+        + `<rect x="${f1(p[0] + r - 1)}" y="${f1(p[1] - r)}" width="${f1(r * 0.85)}" height="${f1(r * 2)}" rx="2" fill="${C.eqDark}" stroke="${C.eqHi}" stroke-width="1.3"/>`; }
     case 'kb': { const p = jp(J, it.j || 'handN'); return circ(add(p, [0, 9]), 9, C.eqDark, ` stroke="${C.eqHi}" stroke-width="2"`) + `<path d="M${P(add(p, [-5, 4]))}Q${P(add(p, [0, -6]))} ${P(add(p, [5, 4]))}" stroke="${C.eqHi}" stroke-width="2.5" fill="none"/>`; }
     case 'cable': { const p = jp(J, it.j || 'handN', it.off); return ln([it.from, p], 1.6, '#c7ced9') + circ(it.from, 5, C.eqDark, ` stroke="${C.eqHi}" stroke-width="1.5"`) + (it.grip === false ? '' : circ(p, 3, C.eqHi)); }
     case 'lever': { const p = jp(J, it.j || 'handN', it.off); return ln([it.piv, p], it.w || 7, it.c || C.eq) + circ(it.piv, 5, C.eqDark) + circ(p, 4.5, C.eqHi); }
@@ -1167,11 +1224,11 @@ function topInset(pat, t) {
   const L = (x1, y1, x2, y2, w, c) => `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${c}" stroke-width="${w}" stroke-linecap="round"/>`;
   let g = `<rect x="${ox}" y="${oy}" width="78" height="84" rx="10" fill="#0f1115" stroke="#2b303b"/><text x="${ox + 39}" y="${oy + 80}" text-anchor="middle" font-size="9" fill="#8792a6">위에서 본 모습</text>`;
   if (T[0] === 'arms') {
-    g += `<ellipse cx="${cx}" cy="${cy}" rx="17" ry="7" fill="#dfe6f0"/><circle cx="${cx}" cy="${cy}" r="6.5" fill="#cbd5e1" stroke="#0f1115"/>`;
+    g += `<ellipse cx="${cx}" cy="${cy}" rx="17" ry="7" fill="#e2ae8c"/><circle cx="${cx}" cy="${cy}" r="6.5" fill="#1c5a7a" stroke="#0f1115"/>`;
     [-1, 1].forEach(sd => { const sx = cx + sd * 15, ex = sx + sd * Math.cos(a) * 26, ey = cy - Math.sin(a) * 26; g += L(sx, cy, ex, ey, 6, '#fb923c') + `<circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="3.4" fill="#8a94a7"/>`; });
     g += `<text x="${cx}" y="${oy + 11}" text-anchor="middle" font-size="8.5" fill="#8792a6">↑ 앞</text>`;
   } else {
-    g += `<ellipse cx="${cx}" cy="${cy + 14}" rx="14" ry="7" fill="#dfe6f0"/>`;
+    g += `<ellipse cx="${cx}" cy="${cy + 14}" rx="14" ry="7" fill="#e2ae8c"/>`;
     [-1, 1].forEach(sd => { if (T[0] === 'leg1' && sd < 0) { g += L(cx - 7, cy + 12, cx - 7, cy - 18, 7, '#dfe6f0'); return; } const hx = cx + sd * 7, kx = hx + sd * Math.sin(a) * 30, ky = cy + 12 - Math.cos(a) * 30; g += L(hx, cy + 12, kx, ky, 7, T[0] === 'leg1' || T[1] < T[2] ? '#fb923c' : '#fdba74') + `<rect x="${(kx + sd * 4 - 3).toFixed(1)}" y="${(ky - 2).toFixed(1)}" width="6" height="12" rx="3" fill="#8a94a7"/>`; });
     g += `<text x="${cx}" y="${oy + 11}" text-anchor="middle" font-size="8.5" fill="#8792a6">↑ 앞</text>`;
   }
@@ -1219,7 +1276,7 @@ function bodyMapSvg(ex) {
     const keys = back ? BACK_KEYS : FRONT_KEYS;
     return E.drawFront(J, p.filter(k => keys.includes(k)), s.filter(k => keys.includes(k)), back) + `<text x="${x}" y="214" text-anchor="middle" font-size="11" fill="#8792a6">${back ? '뒤' : '앞'}</text>`;
   };
-  const leg = `<g font-size="11" fill="#cbd5e1"><rect x="8" y="8" width="11" height="11" rx="3" fill="${E.C.hi}"/><text x="24" y="18">주동근</text><rect x="8" y="26" width="11" height="11" rx="3" fill="${E.C.hi2}"/><text x="24" y="36">보조근</text></g>`;
+  const leg = `<g font-size="11" fill="#1c5a7a"><rect x="8" y="8" width="11" height="11" rx="3" fill="${E.C.hi}"/><text x="24" y="18">주동근</text><rect x="8" y="26" width="11" height="11" rx="3" fill="${E.C.hi2}"/><text x="24" y="36">보조근</text></g>`;
   return `<svg class="bodymap" viewBox="0 0 320 220" role="img" aria-label="타깃 근육: ${esc(ex.primary || '')}">${leg}${one(false, 120)}${one(true, 220)}</svg>`;
 }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }

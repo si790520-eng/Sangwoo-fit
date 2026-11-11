@@ -23,7 +23,7 @@ const MEALS = ['아침', '점심', '저녁', '간식'];
 const isObj = o => o && typeof o === 'object' && !Array.isArray(o);
 const isDate = k => /^\d{4}-\d{2}-\d{2}$/.test(k);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-function emptyDb() { return { version: 2, workouts: {}, custom: [], meals: {}, weights: {}, profile: {}, customFoods: [], favFoods: [], lastAmt: {}, meta: {}, routine: null }; }
+function emptyDb() { return { version: 2, workouts: {}, custom: [], meals: {}, weights: {}, profile: {}, customFoods: [], favFoods: [], lastAmt: {}, meta: {}, routine: null, reviews: {} }; }
 function validDb(d) {
   if (!isObj(d)) return false;
   if (d.workouts === undefined && d.meals === undefined && d.weights === undefined) return false;
@@ -71,6 +71,10 @@ function normalize(d) {
   for (const [k, v] of Object.entries(isObj(d.lastAmt) ? d.lastAmt : {})) if (isObj(v) && nz(v.g) > 0) out.lastAmt[k] = v.p != null ? { p: nz(v.p), n: nz(v.n) || 1, g: nz(v.g) } : { g: nz(v.g) };
   out.favFoods = (Array.isArray(d.favFoods) ? d.favFoods : []).filter(x => typeof x === 'string');
   out.routine = normRoutine(d.routine);
+  out.reviews = {};
+  for (const [k, v] of Object.entries(isObj(d.reviews) ? d.reviews : {})) {
+    if (isDate(k) && isObj(v)) out.reviews[k] = v;
+  }
   return out;
 }
 function num(v) { if (v === '' || v == null) return null; const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : null; }
@@ -521,6 +525,246 @@ function route() {
 }
 const setTitle = t => { $('#title').textContent = t; document.title = t + ' · 핏로그'; };
 
+// ───────── 오늘 운동 총평
+const DAIRY_RE = /우유|밀크|milk|라떼|latte|요거트|요구르트|치즈|유청|웨이|whey|프로틴|생크림|아이스크림/i;
+const REVIEW_FOODS = [
+  { name: '즉석밥 (백미)', por: '1개(210g)', nick: '햇반처럼 즉석밥 1개', role: 'carb' },
+  { name: '고구마 (찐 것)', por: '중 1개≈', nick: '찐 고구마 중 1개', role: 'carb' },
+  { name: '바나나', por: '1개(중)', nick: '바나나 1개', role: 'carb' },
+  { name: '삶은 계란', por: '2개', nick: '삶은 계란 2개', role: 'protein' },
+  { name: '닭가슴살 (구운 것·오븐)', por: '1팩', nick: '닭가슴살 1팩(100g)', role: 'protein' },
+  { name: '아몬드', por: '한 줌≈', nick: '아몬드 한 줌', role: 'snack' },
+  { name: '땅콩', por: '한 줌≈', nick: '땅콩 한 줌', role: 'snack' }
+];
+const REVIEW_MAIN = ['가슴', '등', '대퇴사두', '햄스트링', '둔근', '어깨 옆', '복근'];
+const REVIEW_MUSCLE = { '가슴': ['chest', 'chestU', 'chestL'], '등': ['lats', 'rhomboids'], '대퇴사두': ['quads'], '햄스트링': ['hams'], '둔근': ['glutes', 'gluteMed'], '어깨 옆': ['sideDelt'], '복근': ['abs', 'obliques'] };
+function reviewWorkItems(date) {
+  return (db.workouts[date] || []).map(it => {
+    const ex = exById(it.exId);
+    return { it, ex, m: metrics(ex, it.sets) };
+  }).filter(x => x.m);
+}
+function reviewStall(exId, date) {
+  const ex = exById(exId);
+  const s = sessionsFor(exId).filter(x => x.date <= date);
+  if (s.length < 4) return null;
+  const keys = keyMetrics(ex);
+  let lastImp = 0;
+  const best = {};
+  keys.forEach(k => { best[k] = s[0].m[k]; });
+  for (let i = 1; i < s.length; i++) {
+    let up = false;
+    keys.forEach(k => { if (s[i].m[k] > best[k] + 1e-9) { best[k] = s[i].m[k]; up = true; } });
+    if (up) lastImp = i;
+  }
+  const n = s.length - 1 - lastImp;
+  return n >= 3 ? { n, since: s[lastImp].date } : null;
+}
+function reviewFoodOf(spec) {
+  const f = (window.FOODS || []).find(x => x.name === spec.name);
+  if (!f || DAIRY_RE.test(f.name) || f.k == null) return null;
+  const por = (f.por || []).find(p => p[0] === spec.por);
+  if (!por || !(por[1] > 0)) return null;
+  const factor = f.each ? por[1] : por[1] / 100;
+  const num = v => v == null ? null : r1(v * factor);
+  return { name: f.name, nick: spec.nick, role: spec.role, src: f.src, g: por[1], por: spec.por, kcal: num(f.k), protein: num(f.p), carbs: num(f.c), fat: num(f.f), id: f.id };
+}
+function pickDietFixes(needK, needP) {
+  const all = REVIEW_FOODS.map(reviewFoodOf).filter(Boolean);
+  const by = role => all.filter(x => x.role === role);
+  const picks = [];
+  const add = x => { if (x && !picks.some(p => p.name === x.name)) picks.push(x); };
+  if (needP >= 18) add(by('protein').find(x => x.name.includes('닭가슴살')));
+  else if (needP >= 10) add(by('protein').find(x => x.name.includes('계란')));
+  const pHave = () => picks.reduce((a, x) => a + (x.protein || 0), 0);
+  if (needP - pHave() >= 12) add(by('protein').find(x => !picks.some(p => p.name === x.name)));
+  const kLeft = () => needK - picks.reduce((a, x) => a + (x.kcal || 0), 0);
+  if (kLeft() >= 250) add(by('carb').find(x => x.name.includes('즉석밥')));
+  else if (kLeft() >= 160) add(by('carb').find(x => x.name.includes('고구마')));
+  else if (kLeft() >= 60) add(by('carb').find(x => x.name.includes('바나나')));
+  if (kLeft() >= 120 && picks.length < 3) add(by('carb').find(x => !picks.some(p => p.name === x.name)));
+  if (!picks.length && (needP > 5 || needK > 80)) add(all[0]);
+  return picks;
+}
+function loggedWeeklySets(end) {
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const date = addDays(end, -i);
+    days.push({
+      items: (db.workouts[date] || []).map(it => {
+        const m = metrics(exById(it.exId), it.sets);
+        return { exId: it.exId, sets: m ? m.sets : 0 };
+      }).filter(it => it.sets > 0)
+    });
+  }
+  return weeklySets(days);
+}
+function pickReviewEx(cat, used) {
+  const keys = REVIEW_MUSCLE[cat] || [];
+  const cands = allEx().filter(e => {
+    if (used.has(e.id) || e.type === 'cardio' || String(e.name || '').startsWith('알 수 없는')) return false;
+    if (!window.FORMS || !window.FORMS.musclesFor) return e.group === cat;
+    const mus = window.FORMS.musclesFor(e);
+    return keys.some(k => mus.p.includes(k));
+  });
+  const score = e => {
+    let s = 0;
+    if (e.brand === 'gym80') s -= 40;
+    else if (e.brand === 'panatta') s -= 36;
+    if (e.load === 'cable') s -= 18;
+    else if (e.load === 'dumbbell') s -= 14;
+    else if (e.load === 'machine' || e.load === 'plate') s -= 12;
+    if (typeof brandRank === 'function') s += brandRank(e);
+    return s;
+  };
+  return cands.slice().sort((a, b) => score(a) - score(b) || String(a.name).localeCompare(b.name, 'ko'))[0] || null;
+}
+function buildReview(date) {
+  const rows = reviewWorkItems(date);
+  const groups = [...new Set(rows.map(r => r.ex.group).filter(g => g && g !== '기타'))];
+  let sets = 0, vol = 0, cardio = 0;
+  rows.forEach(r => {
+    if (r.ex.type === 'cardio') cardio += r.m.totalReps;
+    else sets += r.m.sets;
+    if (!noVolume(r.ex)) vol += r.m.volume;
+  });
+  let up = 0, same = 0, down = 0;
+  const prs = [];
+  const per = rows.map(r => {
+    const prev = prevSession(r.ex.id, date);
+    const pr = isPR(r.ex.id, date, r.m);
+    if (pr) prs.push(r.ex.name);
+    let cmp = '', dir = 'same';
+    if (!prev) cmp = '이 운동의 첫 기록이에요. 오늘 기준을 잘 남겼어요.';
+    else {
+      const dv = r1((r.m.volume || 0) - (prev.m.volume || 0));
+      const dt = r1((r.m.top || 0) - (prev.m.top || 0));
+      const bits = [];
+      if (Math.abs(dv) < 1) bits.push('볼륨은 지난번과 같아요');
+      else if (dv > 0) { bits.push(`볼륨이 지난번보다 ${fmt(dv)}kg 올랐어요`); dir = 'up'; }
+      else { bits.push(`볼륨은 지난번보다 ${fmt(-dv)}kg 낮았어요`); dir = 'down'; }
+      if (r.ex.type === 'weight') {
+        if (Math.abs(dt) < 0.05) bits.push('최고 세트 무게는 같아요');
+        else if (dt > 0) { bits.push(`최고 무게 +${fmt(dt)}kg`); if (dir !== 'down') dir = 'up'; }
+        else bits.push(`최고 무게는 ${fmt(-dt)}kg 낮았어요`);
+      }
+      cmp = bits.join('. ') + '.';
+      if (dir === 'up') up++;
+      else if (dir === 'down') down++;
+      else same++;
+    }
+    const [lo, hi] = progRange(r.ex);
+    const work = r.m.work || [r.m.topReps];
+    let tip;
+    if (r.ex.type === 'weight') {
+      const hitTop = work.length && work.every(x => x >= hi);
+      tip = hitTop
+        ? `모든 세트가 ${hi}회에 닿았어요. 다음엔 무게를 ${fmt(minInc(r.ex))}kg만 올려 보고, 횟수는 ${lo}회부터 다시 쌓아요. 매번 올릴 필요는 없고, 횟수를 다 채웠을 때만 한 칸 올리면 돼요.`
+        : `같은 무게를 유지한 것도 잘한 거예요. 다음엔 ${fmt(r.m.top)}kg 그대로 1~2회만 더 채우면 돼요 (지금 ${work.join('/')}회 · 목표 ${hi}회).`;
+    } else {
+      const nxt = nextTarget(r.ex, r.m);
+      tip = nxt ? `다음 목표: ${nxt}.` : '오늘 기록을 잘 남겼어요.';
+    }
+    if (pr) tip = '오늘 PR이에요! 🎉 ' + tip;
+    const stall = reviewStall(r.ex.id, date);
+    if (stall) tip += ` 최근 ${stall.n}번은 큰 변화 없이 비슷했어요. 조급해하지 말고 같은 무게로 횟수를 차근히 쌓아 봐요.`;
+    return { id: r.ex.id, name: r.ex.name, group: r.ex.group, sets: r.m.sets, pr, stall: stall && stall.n, cmp, tip, dir, setsText: setsText(r.ex, r.it.sets.filter(s => s.r > 0)) };
+  });
+  const wk = loggedWeeklySets(date);
+  const used = new Set(rows.map(r => r.ex.id));
+  const low = REVIEW_MAIN.map(n => ({ n, t: ((wk[n] && wk[n].d) || 0) + ((wk[n] && wk[n].i) || 0) / 2 }))
+    .filter(x => x.t < 10).sort((a, b) => a.t - b.t);
+  const next = [];
+  for (const g of low) {
+    const ex = pickReviewEx(g.n, used);
+    if (!ex) continue;
+    used.add(ex.id);
+    next.push({ group: g.n, week: r1(g.t), id: ex.id, name: ex.name, load: ex.load || '', brand: ex.brand || '' });
+    if (next.length >= 2) break;
+  }
+  const t = calcTargets(date), tot = dayTotals(date);
+  let dietNeed = null, dietPicks = [];
+  if (t) {
+    dietNeed = { kcal: r1(t.kcal - tot.kcal), protein: r1(t.protein - tot.protein) };
+    if (dietNeed.protein >= 10 || dietNeed.kcal >= 80) dietPicks = pickDietFixes(dietNeed.kcal, dietNeed.protein);
+  }
+  const names = rows.map(r => r.ex.name);
+  const nameList = names.length <= 3 ? names.join('·') : `${names.slice(0, 3).join('·')} 외 ${names.length - 3}가지`;
+  const cmpParts = [];
+  if (up) cmpParts.push(`${up}가지는 지난번보다 올랐어요`);
+  if (same) cmpParts.push(`${same}가지는 비슷했어요`);
+  if (down) cmpParts.push(`${down}가지는 조금 낮았어요`);
+  const cmpLine = cmpParts.length ? cmpParts.join('. ') + '.' : '';
+  const hello = prs.length ? '오늘 힘차게 잘 해냈어요!' : '오늘도 잘 채우고 마무리했네요!';
+  const sum = `${hello} ${esc(nameList)} 포함 <b>${rows.length}가지</b>를 했어요. 총 <b>${sets}세트</b>${vol ? `, 볼륨 <b>${fmt(vol)}kg</b>` : ''}${cardio ? `, 유산소 <b>${fmt(cardio)}분</b>` : ''}${groups.length ? ` · 자극한 부위: ${esc(groups.join(', '))}` : ''}. ${cmpLine}`;
+  const perHtml = per.map(x => `<div class="rv-ex" data-ex="${esc(x.id)}"><div class="nm">${esc(x.name)}${x.pr ? '<span class="rv-tag">PR</span>' : ''}${x.dir === 'up' ? '<span class="rv-tag">상승</span>' : x.dir === 'down' ? '<span class="rv-tag down">낮음</span>' : '<span class="rv-tag same">유지</span>'}</div><div class="meta">${esc(x.setsText)}</div><p>${esc(x.cmp)} ${esc(x.tip)}</p></div>`).join('');
+  let nextHtml;
+  if (next.length) {
+    nextHtml = next.map(n => `<div class="rv-food"><b>${esc(n.group)}</b> <span class="muted">최근 7일 ${fmt(n.week)}/10세트</span><div style="margin-top:4px">${esc(n.name)} 추천해요.</div></div>`).join('');
+    nextHtml = `<p>최근 7일 기준으로 아직 10세트가 안 채워진 부위가 있어요. 머신·케이블·덤벨 위주로 골라 봤어요.</p>${nextHtml}`;
+  } else {
+    nextHtml = '<p>최근 7일 주요 부위가 고르게 채워졌어요. 잘하고 있어요! 회복이 괜찮으면 약했던 보조 동작을 하나만 더 넣어도 좋아요.</p>';
+  }
+  let dietHtml;
+  if (!t) {
+    dietHtml = '<p>설정 탭에서 키·체중·나이·목표를 입력하면, 오늘 식단이 목표에 얼마나 닿았는지도 같이 봐 드려요.</p>';
+  } else {
+    dietHtml = `<p>오늘은 칼로리 <b>${fmt(tot.kcal)} / ${fmt(t.kcal)}kcal</b>, 단백질 <b>${fmt(tot.protein)} / ${fmt(t.protein)}g</b>이에요.</p>`;
+    if (dietNeed.protein < 10 && dietNeed.kcal < 100) {
+      dietHtml += '<p>단백질과 칼로리 목표에 잘 맞았어요. 이 페이스를 유지해 봐요 👏</p>';
+    } else {
+      const miss = [];
+      if (dietNeed.protein >= 10) miss.push(`단백질 ${fmt(dietNeed.protein)}g`);
+      if (dietNeed.kcal >= 80) miss.push(`칼로리 ${fmt(dietNeed.kcal)}kcal`);
+      dietHtml += `<p>${miss.join(', ')} 정도가 더 있으면 목표에 가까워져요.</p>`;
+      dietHtml += dietPicks.map(p => `<div class="rv-food">${esc(p.nick)} · ${fmt(p.kcal)}kcal · 단백질 ${fmt(p.protein)}g <span class="muted small">(${esc(SRC_LBL[p.src] || p.src || '')})</span></div>`).join('');
+    }
+    dietHtml += '<p class="small" style="margin-top:10px">운동을 마친 뒤에는 탄수화물과 단백질을 같이 드시면 회복에 도움이 돼요. 즉석밥과 닭가슴살, 또는 바나나와 삶은 계란처럼요.</p>';
+  }
+  const html = `<h2>오늘 운동 총평</h2>
+    <p class="muted small" style="margin-top:-8px">${esc(labelD(date))}</p>
+    <div class="rv-sec"><h3>💪 한눈에</h3><p>${sum}</p></div>
+    <div class="rv-sec"><h3>종목별 피드백</h3>${perHtml || '<p class="muted">완료된 세트가 없어요.</p>'}</div>
+    <div class="rv-sec"><h3>다음엔 이걸 더 해보세요</h3>${nextHtml}</div>
+    <div class="rv-sec"><h3>🍚 식단</h3>${dietHtml}</div>
+    <p class="muted small" style="margin:16px 2px 4px">어디가 찌릿하거나 아프면 억지로 밀어붙이지 말고, 병원이나 물리치료 전문가와 상담해 주세요. 이 총평은 기록이 알려 주는 연습 가이드일 뿐 의학적 조언이 아니에요.</p>`;
+  return {
+    savedAt: new Date().toISOString(),
+    html,
+    data: {
+      date, exercises: rows.length, sets, volume: r1(vol), groups, up, same, down, prs,
+      per: per.map(x => ({ id: x.id, name: x.name, pr: x.pr, stall: x.stall, dir: x.dir, tip: x.tip })),
+      next,
+      diet: t ? { kcal: r1(tot.kcal), protein: r1(tot.protein), kcalT: t.kcal, proteinT: t.protein, need: dietNeed, picks: dietPicks.map(p => ({ name: p.name, nick: p.nick, kcal: p.kcal, protein: p.protein, src: p.src })) } : null
+    }
+  };
+}
+function reviewBtnsHtml() {
+  const isToday = curDate === todayStr();
+  const hasWork = reviewWorkItems(curDate).length > 0;
+  const hasRev = !!(db.reviews && db.reviews[curDate]);
+  let h = '';
+  if (hasWork && isToday && !hasRev) h += `<button type="button" class="btn primary block" id="doneEx" style="min-height:56px;font-size:17px;margin-top:10px">✓ 운동완료</button>`;
+  if (hasRev) h += `<button type="button" class="btn ${isToday ? 'primary' : ''} block" id="viewRev" style="min-height:52px;margin-top:10px">총평 다시 보기</button>`;
+  if (hasWork && isToday && hasRev) h += `<button type="button" class="btn ghost block" id="redoRev" style="margin-top:8px">총평 다시 만들기</button>`;
+  return h;
+}
+function showReview(rebuild) {
+  if (rebuild || !(db.reviews && db.reviews[curDate])) {
+    db.reviews = db.reviews || {};
+    db.reviews[curDate] = buildReview(curDate);
+    save();
+    renderLog();
+  }
+  const rec = db.reviews[curDate];
+  if (rec && rec.html) openSheet(rec.html);
+}
+function bindReviewBtns() {
+  const d = $('#doneEx'); if (d) d.onclick = () => showReview(true);
+  const v = $('#viewRev'); if (v) v.onclick = () => showReview(false);
+  const r = $('#redoRev'); if (r) r.onclick = () => showReview(true);
+}
+
 // ───────── 기록 화면
 function renderLog() {
   setTitle(curDate === todayStr() ? '오늘' : '하루 기록');
@@ -535,7 +779,8 @@ function renderLog() {
     <div id="daySum"></div>
     <div id="exList">${items.map((it, i) => exCard(it, i)).join('')}</div>
     ${items.length ? '' : `<div class="empty" style="padding:18px"><p style="margin:0">아직 운동 기록이 없어요. 아래 버튼으로 추가해 보세요!</p></div>`}
-    <button class="btn primary block" id="addEx" style="min-height:56px;font-size:17px">＋ 운동 추가</button>`;
+    <button class="btn primary block" id="addEx" style="min-height:56px;font-size:17px">＋ 운동 추가</button>
+    ${reviewBtnsHtml()}`;
   renderDaySum();
   bindDateBar(renderLog);
   bindSelBar($('.selbar'), 'log', {
@@ -555,6 +800,7 @@ function renderLog() {
   $('#todayDiet').innerHTML = todayDietHtml();
   $('#todayDiet').onclick = e => { if (e.target.closest('[data-go]')) go(e.target.closest('[data-go]').dataset.go); };
   $('#addEx').onclick = () => openPicker(id => addExercise(id));
+  bindReviewBtns();
   bindRoutineToday();
   bindCards();
 }
@@ -1091,7 +1337,7 @@ function renderSettings() {
       <p class="small" style="margin:0">아이폰: 사파리 하단 <b>공유</b> → <b>홈 화면에 추가</b><br>안드로이드: 크롬 메뉴(⋮) → <b>홈 화면에 추가</b> 또는 <b>앱 설치</b><br><span class="muted">한 번 열고 나면 인터넷 없이도 동작해요.</span></p></div>
     <button class="btn block" id="evBtn" style="margin-bottom:12px">📚 계산·음식 데이터 근거 (논문·출처)</button>
     <button class="btn danger block" id="wipe">전체 기록 삭제</button>
-    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v11 · 상우님 전용 💪</p>`;
+    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v12 · 상우님 전용 💪</p>`;
   $('#evBtn').onclick = () => go('#/evidence');
   const fname = () => `fitlog-backup-${todayStr()}.json`;
   const markBackup = () => { db.meta.lastBackup = todayStr(); save(); };
@@ -2146,5 +2392,5 @@ route();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
-window.__fitlog = { get db() { return db; }, overlays: () => ovStack.map(o => o.type), metrics, sessionsFor, isPlateau, plateauInfo, progRange, minInc, pct: (id, m) => pctValue(exById(id), m), nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods, filterEx, exById, keyMetrics, weeklySets, buildTpl, RT_TPL, pickSlot, swapCands, targetSets, normRoutine, myBrands, myGym, rtVisible, GYMS: window.GYMS };
+window.__fitlog = { get db() { return db; }, overlays: () => ovStack.map(o => o.type), metrics, sessionsFor, isPlateau, plateauInfo, progRange, minInc, pct: (id, m) => pctValue(exById(id), m), nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods, filterEx, exById, keyMetrics, weeklySets, buildTpl, RT_TPL, pickSlot, swapCands, targetSets, normRoutine, myBrands, myGym, rtVisible, GYMS: window.GYMS, buildReview, reviewFoodOf, pickDietFixes, loggedWeeklySets, pickReviewEx, reviewStall, DAIRY_RE };
 })();
