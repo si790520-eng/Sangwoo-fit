@@ -464,6 +464,316 @@ def load_sb(path, kind):
     return out, skipped
 
 
+
+def load_existing_items():
+    text = OUT.read_text(encoding="utf-8")
+    start = text.index("var extra = ") + len("var extra = ")
+    end = text.rindex(";\n  window.FOODS")
+    return json.loads(text[start:end])
+
+
+def write_brand_js(all_items):
+    header = f"""/* 브랜드 공식 영양정보 — tools/build_brand_foods.py 가 만들어요. 직접 고치지 마세요.
+   확인일 {CHECKED}. 공식 출처만 썼고, 표에 없는 탄수·총지방은 null 이에요.
+   each:true 항목은 k/p/c/f 가 1회 제공량당(100g당이 아님)이에요.
+   pEst:true 는 세트·사이드 단백질 추정(단품 공식 단백질 + 사이드 + 음료). 칼로리·탄수·지방은 공식 값 그대로예요. */
+(function () {{
+  var extra = """
+    body = json.dumps(all_items, ensure_ascii=False, separators=(",", ":"))
+    footer = """;
+  window.FOODS = (window.FOODS || []).concat(extra);
+})();
+"""
+    OUT.write_text(header + body + footer, encoding="utf-8")
+
+
+def _bare_name(it):
+    name = it.get("name") or ""
+    for pref in ("버거킹 ", "맥도날드 ", "롯데리아 ", "스타벅스 "):
+        if name.startswith(pref):
+            return name[len(pref):]
+    return name
+
+
+def _neat(n):
+    n = round(float(n) + 1e-9, 1)
+    return int(n) if abs(n - round(n)) < 1e-6 else n
+
+
+def serving_kcal(it):
+    if not it or it.get("k") is None:
+        return None
+    if it.get("each"):
+        return float(it["k"])
+    por = it.get("por") or []
+    if not por:
+        return None
+    return float(it["k"]) * float(por[0][1]) / 100.0
+
+
+def serving_protein(it):
+    if not it or it.get("p") is None:
+        return None
+    if it.get("each"):
+        return float(it["p"])
+    por = it.get("por") or []
+    if not por:
+        return None
+    return float(it["p"]) * float(por[0][1]) / 100.0
+
+
+def _is_fries(name):
+    n = name or ""
+    if any(x in n for x in ("소스", "시즈닝", "딥 트러플")):
+        return False
+    return any(x in n for x in ("프렌치프라이", "후렌치 후라이", "후렌치후라이", "포테이토", "감자튀김"))
+
+
+def _fries_size(name):
+    raw = name or ""
+    n = nkey(raw)
+    if "라지" in raw or n.endswith("l"):
+        return "L"
+    if "스몰" in raw or n.endswith("s"):
+        return "S"
+    if "미디엄" in raw or n.endswith("m") or n.endswith("r"):
+        return "R"
+    return None
+
+
+def _is_cola(name):
+    n = nkey(name)
+    return any(x in n for x in ("코카콜라", "콜라")) and "플로트" not in n
+
+
+def _is_soda(name):
+    n = nkey(name)
+    return any(x in n for x in ("코카콜라", "콜라", "스프라이트", "환타", "닥터페퍼", "마운틴듀", "사이다"))
+
+
+def _append_src_note(it, extra):
+    note = it.get("srcNote") or ""
+    note = note.replace(
+        "중량·단백질·총 탄수화물·총 지방은 현재 공식 표에 없어요.",
+        "중량·총 탄수화물·총 지방은 현재 공식 표에 없어요.",
+    )
+    note = note.replace(
+        "중량·단백질·총 탄수화물·총 지방은 이 항목의 공식 표에 없어요.",
+        "중량·총 탄수화물·총 지방은 이 항목의 공식 표에 없어요.",
+    )
+    if extra and extra not in note:
+        note = (note + " " + extra).strip()
+    it["srcNote"] = note
+
+
+def fill_estimated_protein(items):
+    """세트·라지세트와 BK 프렌치프라이의 빈 단백질을 추정으로 채워요. 칼로리·탄수·지방은 그대로."""
+    report = {"filled": [], "skipped": [], "fries": [], "mcd": []}
+
+    def index_items():
+        by, by_srcname = {}, {}
+        for it in items:
+            by[(it["src"], nkey(_bare_name(it)))] = it
+            if it.get("srcName"):
+                by_srcname.setdefault((it["src"], nkey(it["srcName"])), it)
+        return by, by_srcname
+
+    by, by_srcname = index_items()
+
+    def find(src, name):
+        k = nkey(name)
+        return by.get((src, k)) or by_srcname.get((src, k))
+
+    # 1) BK 프렌치프라이 R/L — 공식 중량이 없어 USDA g/100g 환산 불가. McD 같은 사이즈 대용.
+    mcd_fries = {
+        "R": find("맥도날드", "후렌치 후라이 미디엄"),
+        "L": find("맥도날드", "후렌치 후라이 라지"),
+        "S": find("맥도날드", "후렌치 후라이 스몰"),
+    }
+    size_lbl = {"R": ("미디엄", "R≈M"), "L": ("라지", "L≈L"), "S": ("스몰", "S≈S")}
+    for it in items:
+        if it["src"] != "버거킹" or it.get("p") is not None:
+            continue
+        bare = _bare_name(it)
+        if nkey(bare) not in ("프렌치프라이r", "프렌치프라이l"):
+            continue
+        size = _fries_size(bare)
+        src_it = mcd_fries.get(size)
+        sp = serving_protein(src_it)
+        if sp is None:
+            report["skipped"].append({"name": it["name"], "why": "맥도날드 같은 사이즈 감튀를 찾지 못함"})
+            continue
+        p = _neat(sp)
+        it["p"] = p
+        it["pEst"] = True
+        sl, eq = size_lbl[size]
+        extra = (
+            f"단백질 ≈{p}g은 버거킹이 감자튀김 중량·단백질을 공개하지 않아 "
+            f"맥도날드 후렌치 후라이 {sl}(1개 {src_it['por'][0][1]:.0f}g·단백질 {_neat(sp)}g, 공식 영양분석표)을 "
+            f"같은 사이즈({eq}) 대용으로 쓴 추정값이에요. USDA(100g당) 환산은 공식 중량이 없어 적용하지 않았어요. "
+            f"칼로리 {_neat(it['k'])}kcal는 버거킹 공식 값 그대로예요."
+        )
+        _append_src_note(it, extra)
+        rec = {"name": it["name"], "p": p, "via": src_it["name"], "kcal": it["k"]}
+        report["fries"].append(rec)
+        report["filled"].append(rec)
+
+    by, by_srcname = index_items()  # fries now have protein
+
+    mcd_hash = find("맥도날드", "해쉬 브라운")
+    mcd_am = find("맥도날드", "아메리카노 미디엄")
+
+    def fries_part(src, part):
+        own = find(src, part)
+        if own and serving_protein(own) is not None:
+            tag = "추정" if own.get("pEst") else "공식"
+            return serving_protein(own), f"{_bare_name(own)} {_neat(serving_protein(own))}g({tag})", own
+        size = _fries_size(part) or "R"
+        src_it = mcd_fries.get(size)
+        if src_it and serving_protein(src_it) is not None:
+            return serving_protein(src_it), (
+                f"{src_it['name']} {_neat(serving_protein(src_it))}g 대용"
+            ), src_it
+        return None, None, None
+
+    def drink_part(src, part):
+        if _is_cola(part):
+            return 0.0, "콜라 0g"
+        own = find(src, part)
+        sp = serving_protein(own) if own else None
+        if sp is not None:
+            return sp, f"{_bare_name(own)} {_neat(sp)}g(공식)"
+        if _is_soda(part):
+            return 0.0, f"{part} 0g(탄산·공식 단백질 없음)"
+        return None, None
+
+    def apply_fill(it, total, extra_note, kind, parts_txt):
+        p = _neat(total)
+        it["p"] = p
+        it["pEst"] = True
+        _append_src_note(it, extra_note)
+        rec = {"name": it["name"], "p": p, "kcal": it["k"], "kind": kind, "parts": parts_txt}
+        report["filled"].append(rec)
+        if kind.startswith("mcd"):
+            report["mcd"].append(rec)
+        return rec
+
+    # 2) 구성이 적힌 세트 (BK 점심/저녁 세트·라지세트)
+    for it in items:
+        if it.get("p") is not None:
+            continue
+        note = it.get("note") or ""
+        if "구성:" not in note or "세트" not in it["name"]:
+            continue
+        parts = [x.strip() for x in note.split("구성:", 1)[1].split("+")]
+        parts = [x for x in parts if x]
+        if len(parts) < 2:
+            report["skipped"].append({"name": it["name"], "why": f"구성 조각이 부족: {parts}"})
+            continue
+        total = 0.0
+        bits = []
+        ok = True
+        for part in parts:
+            if _is_fries(part):
+                sp, lab, _ = fries_part(it["src"], part)
+                if sp is None:
+                    ok = False
+                    report["skipped"].append({"name": it["name"], "why": f"감튀 단백질 없음: {part}"})
+                    break
+                total += sp
+                bits.append(lab)
+            elif _is_soda(part) or _is_cola(part) or "아메리카노" in part:
+                sp, lab = drink_part(it["src"], part)
+                if sp is None:
+                    ok = False
+                    report["skipped"].append({"name": it["name"], "why": f"음료 단백질 없음: {part}"})
+                    break
+                total += sp
+                bits.append(lab)
+            else:
+                main = find(it["src"], part)
+                sp = serving_protein(main) if main else None
+                if sp is None:
+                    ok = False
+                    report["skipped"].append({"name": it["name"], "why": f"단품 공식 단백질 없음: {part}"})
+                    break
+                total += sp
+                bits.append(f"{_bare_name(main)} {_neat(sp)}g(공식)")
+        if not ok:
+            continue
+        extra = (
+            f"단백질 ≈{_neat(total)}g은 공식 구성({' + '.join(parts)})의 단백질을 더한 추정값이에요 "
+            f"({' + '.join(bits)}). 칼로리 {_neat(it['k'])}kcal는 공식 값 그대로예요."
+        )
+        apply_fill(it, total, extra, "composed-set", bits)
+
+    # 3) 맥도날드 아침 세트/콤보 — 공식 구성 문구는 없지만 열량 차이가 해쉬 브라운·아메리카노와 맞음
+    hb_k, hb_p = serving_kcal(mcd_hash), serving_protein(mcd_hash)
+    am_k, am_p = serving_kcal(mcd_am), serving_protein(mcd_am)
+    for it in items:
+        if it.get("p") is not None or it["src"] != "맥도날드":
+            continue
+        if "세트" not in it["name"] and "콤보" not in it["name"]:
+            continue
+        bare = _bare_name(it)
+        base = bare
+        kind = "세트"
+        for suf in (" 콤보", " 세트", "콤보", "세트"):
+            if base.endswith(suf):
+                base = base[: -len(suf)].rstrip()
+                kind = suf.strip()
+                break
+        main = find("맥도날드", base)
+        mp = serving_protein(main) if main else None
+        mk = serving_kcal(main) if main else None
+        sk = serving_kcal(it)
+        if mp is None or mk is None or sk is None:
+            report["skipped"].append({"name": it["name"], "why": f"단품을 찾지 못함: {base}"})
+            continue
+        diff = sk - mk
+        use_hash = kind == "세트" and hb_k is not None and abs(diff - (hb_k + (am_k or 0))) <= 25
+        use_am = (kind == "콤보" or (kind == "세트" and not use_hash)) and am_k is not None and abs(diff - am_k) <= 15
+        if use_hash:
+            total = mp + hb_p + am_p
+            bits = [
+                f"{_bare_name(main)} {_neat(mp)}g(공식)",
+                f"해쉬 브라운 {_neat(hb_p)}g(공식)",
+                f"아메리카노 미디엄 {_neat(am_p)}g(공식)",
+            ]
+            extra = (
+                f"단백질 ≈{_neat(total)}g은 단품 공식 단백질({_neat(mp)}g) + 해쉬 브라운 {_neat(hb_p)}g + "
+                f"아메리카노 미디엄 {_neat(am_p)}g이에요. 공식 세트 구성 문구는 없지만 열량 차이 약 {_neat(diff)}kcal가 "
+                f"해쉬 브라운({_neat(hb_k)}kcal)+아메리카노 미디엄({_neat(am_k)}kcal)과 맞아서 그 공식 단백질을 더했어요. "
+                f"후렌치 후라이는 넣지 않았어요. 칼로리 {_neat(it['k'])}kcal는 공식 값 그대로예요."
+            )
+            apply_fill(it, total, extra, "mcd-breakfast-set", bits)
+        elif use_am:
+            total = mp + am_p
+            bits = [
+                f"{_bare_name(main)} {_neat(mp)}g(공식)",
+                f"아메리카노 미디엄 {_neat(am_p)}g(공식)",
+            ]
+            why = (
+                f"콤보라서 단품+음료로 봤어요" if kind == "콤보"
+                else f"열량 차이 약 {_neat(diff)}kcal가 아메리카노 미디엄({_neat(am_k)}kcal)과 맞아요"
+            )
+            extra = (
+                f"단백질 ≈{_neat(total)}g은 단품 공식 단백질({_neat(mp)}g) + 아메리카노 미디엄 {_neat(am_p)}g이에요. "
+                f"공식 구성 문구는 없지만 {why}. 후렌치 후라이는 넣지 않았어요. "
+                f"칼로리 {_neat(it['k'])}kcal는 공식 값 그대로예요."
+            )
+            apply_fill(it, total, extra, "mcd-combo-or-set-drink", bits)
+        else:
+            report["skipped"].append({
+                "name": it["name"],
+                "why": f"열량 차이 {diff:.1f}가 해쉬브라운+아메리카노/아메리카노만과 맞지 않음",
+            })
+
+    report["filled_count"] = len(report["filled"])
+    report["skipped_count"] = len(report["skipped"])
+    return report
+
+
 def main():
     all_items = []
     report = {"checked": CHECKED, "sources": [], "skipped": {}, "counts": {}, "missing_cf": []}
@@ -514,6 +824,9 @@ def main():
         "detail": "음료는 페이지에 Tall 사이즈 기준이라고 적혀 있어요. API 필드 kcal/protein/chabo(탄수)/fat(지방).",
     })
 
+    fill_rep = fill_estimated_protein(all_items)
+    report["protein_fill"] = fill_rep
+
     # 카테고리별
     report["by_cat"] = dict(Counter(i["cat"] for i in all_items))
     report["total"] = len(all_items)
@@ -530,18 +843,7 @@ def main():
         "srcNote": i["srcNote"],
     } for i in mw]
 
-    header = f"""/* 브랜드 공식 영양정보 — tools/build_brand_foods.py 가 만들어요. 직접 고치지 마세요.
-   확인일 {CHECKED}. 공식 출처만 썼고, 표에 없는 탄수·총지방은 null 이에요.
-   each:true 항목은 k/p/c/f 가 1회 제공량당(100g당이 아님)이에요. */
-(function () {{
-  var extra = """
-
-    body = json.dumps(all_items, ensure_ascii=False, separators=(",", ":"))
-    footer = """;
-  window.FOODS = (window.FOODS || []).concat(extra);
-})();
-"""
-    OUT.write_text(header + body + footer, encoding="utf-8")
+    write_brand_js(all_items)
     # skipped tuples may not be json-friendly already are
     REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     print("wrote", OUT, "items", len(all_items), "bytes", OUT.stat().st_size)
@@ -554,4 +856,31 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    if "--fill-only" in sys.argv:
+        items = load_existing_items()
+        rep = fill_estimated_protein(items)
+        report = {
+            "checked": CHECKED,
+            "fill_only": True,
+            "protein_fill": rep,
+            "total": len(items),
+            "missing_protein_count": sum(1 for i in items if i["p"] is None),
+            "by_cat": dict(Counter(i["cat"] for i in items)),
+            "each_count": sum(1 for i in items if i.get("each")),
+        }
+        mw = [i for i in items if "몬스터와퍼" in i["name"]]
+        report["monster"] = [{
+            "name": i["name"], "k": i["k"], "p": i["p"], "c": i["c"], "f": i["f"],
+            "pEst": i.get("pEst"), "each": i.get("each", False), "por": i["por"],
+            "srcNote": i.get("srcNote"),
+        } for i in mw]
+        write_brand_js(items)
+        REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        print("wrote", OUT, "items", len(items), "bytes", OUT.stat().st_size)
+        print(json.dumps(rep, ensure_ascii=False, indent=2))
+        print("remaining p=null", report["missing_protein_count"])
+        for i in mw:
+            print(" ", i["name"], "k", i["k"], "p", i["p"], "pEst", i.get("pEst"))
+    else:
+        main()
