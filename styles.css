@@ -90,7 +90,7 @@ main{padding:14px 14px 20px;max-width:640px;margin:0 auto}
 .seg{display:flex;background:var(--card2);border-radius:12px;padding:4px;margin-bottom:10px}
 .seg button{flex:1;min-height:40px;border:0;background:none;border-radius:9px;font-size:14px;color:var(--muted);cursor:pointer}
 .seg button.on{background:var(--bg);color:var(--text);font-weight:700}
-.toast{position:fixed;left:50%;bottom:calc(96px + var(--safe-b));transform:translateX(-50%);background:#fff;color:#111;padding:10px 16px;border-radius:999px;font-weight:600;z-index:60;box-shadow:0 6px 24px rgba(0,0,0,.4);max-width:90vw;text-align:center}
+.toast{position:fixed;left:50%;bottom:calc(96px + var(--safe-b));transform:translateX(-50%);background:#fff;color:#111;padding:10px 16px;border-radius:999px;font-weight:600;z-index:60;box-shadow:0 6px 24px rgba(0,0,0,.4);max-width:90vw;text-align:center;display:flex;align-items:center;gap:10px}
 .sum-line{font-size:14px;color:var(--muted)}
 .stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px;text-align:center}
@@ -203,3 +203,27 @@ details.guide summary{cursor:pointer;font-weight:700;font-size:14px}
 .tag.likely{background:rgba(250,204,21,.16);color:#fde047}
 .gym-src{margin:6px 0 0;color:var(--muted);word-break:break-all}
 .gym-src a{color:var(--muted);text-decoration:underline}
+
+/* v10: 다중 선택 삭제 · 운동 썸네일 · 단백질 추정 */
+.toast-act{background:none;border:0;color:#15803d;font-weight:800;padding:0;cursor:pointer;white-space:nowrap}
+.est-badge{display:inline-block;margin-left:4px;padding:1px 6px;border-radius:999px;font-size:11px;font-weight:700;background:rgba(251,191,36,.16);color:var(--warn);vertical-align:middle}
+.selbar{display:flex;gap:8px;align-items:center;margin:0 0 12px;flex-wrap:wrap}
+.selbar .btn[disabled]{opacity:.4;pointer-events:none}
+.sel-box{flex:none;width:22px;height:22px;border:2px solid var(--muted);border-radius:6px;background:transparent;position:relative;padding:0}
+.food-row.sel-on .sel-box,.ex-card.sel-on .sel-box,.list-item.sel-on .sel-box{background:var(--accent);border-color:var(--accent)}
+.food-row.sel-on .sel-box::after,.ex-card.sel-on .sel-box::after,.list-item.sel-on .sel-box::after{content:"";position:absolute;left:6px;top:2px;width:6px;height:11px;border:solid #06210f;border-width:0 2.5px 2.5px 0;transform:rotate(45deg)}
+.food-row.sel-on,.ex-card.sel-on,.list-item.sel-on{outline:2px solid var(--accent);outline-offset:0}
+.ex-card.sel-mode{cursor:pointer}
+.ex-card.sel-mode .set-row,.ex-card.sel-mode .actions,.ex-card.sel-mode .cmp{pointer-events:none}
+.ex-thumb{flex:none;width:46px;height:46px;border-radius:10px;overflow:hidden;background:var(--card2);display:flex;align-items:center;justify-content:center}
+.ex-thumb svg{width:46px;height:46px;display:block}
+.ex-thumb-fb{display:flex;align-items:center;justify-content:center;width:46px;height:46px;border-radius:10px;font-size:20px;font-weight:800;background:#2b303b}
+.ex-thumb-fb[data-g="가슴"]{background:#7f1d1d}
+.ex-thumb-fb[data-g="등"]{background:#1e3a5f}
+.ex-thumb-fb[data-g="어깨"]{background:#713f12}
+.ex-thumb-fb[data-g="하체"]{background:#14532d}
+.ex-thumb-fb[data-g="둔근"]{background:#831843}
+.ex-thumb-fb[data-g="팔"]{background:#4c1d95}
+.ex-thumb-fb[data-g="복근"]{background:#134e4a}
+.ex-thumb-fb[data-g="유산소"]{background:#1e3a8a}
+.ex-list-main{flex:1;min-width:0}

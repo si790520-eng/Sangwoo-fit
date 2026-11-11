@@ -1276,5 +1276,21 @@ function start(root, ex) {
 }
 // 브랜드 기구(brands.js)는 같은 동작의 기본 운동 그림을 그대로 써요
 for (const e of window.EXERCISES || []) if (e.base) { if (M[e.base] && !M[e.id]) M[e.id] = M[e.base]; if (TOP[e.base] && !TOP[e.id]) TOP[e.id] = TOP[e.base]; }
-window.FORMS = { topInset, patternFor, musclesFor, bodyMapSvg, guideFigureHtml, start, stop, MAP: M };
+const THUMB_CACHE = {};
+const G_ICON = { 가슴: '💪', 등: '🏋️', 어깨: '🤸', 하체: '🦵', 둔근: '🍑', 팔: '💪', 복근: '🎯', 유산소: '🏃', 기타: '•' };
+function thumbFallback(ex, size) {
+  const g = (ex && ex.group) || '기타';
+  const icon = G_ICON[g] || G_ICON['기타'];
+  return `<span class="ex-thumb-fb" data-g="${esc(g)}" style="width:${size}px;height:${size}px" title="${esc(g)}">${icon}</span>`;
+}
+function thumbHtml(ex, size = 44) {
+  if (!ex) return thumbFallback({ group: '기타' }, size);
+  if (THUMB_CACHE[ex.id]) return THUMB_CACHE[ex.id];
+  const pat = patternFor(ex);
+  if (!pat) return (THUMB_CACHE[ex.id] = thumbFallback(ex, size));
+  const f = frameSvg(pat, ex, 0);
+  const svg = `<svg class="ex-thumb-svg" viewBox="${VB}" width="${size}" height="${size}" aria-hidden="true" focusable="false">${SC.DEFS}${f.body}</svg>`;
+  return (THUMB_CACHE[ex.id] = svg);
+}
+window.FORMS = { topInset, patternFor, musclesFor, bodyMapSvg, guideFigureHtml, start, stop, MAP: M, thumbHtml, frameSvg };
 })();

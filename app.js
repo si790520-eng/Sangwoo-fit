@@ -300,13 +300,51 @@ function message(ex, cur, prev) {
 
 // ───────── 토스트 / 시트
 let toastT;
-function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.remove('hidden'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.add('hidden'), 2200); }
+function toast(t, action) {
+  const el = $('#toast');
+  clearTimeout(toastT);
+  if (action && action.lbl && action.fn) {
+    el.innerHTML = `<span>${esc(t)}</span><button type="button" class="toast-act">${esc(action.lbl)}</button>`;
+    el.querySelector('.toast-act').onclick = ev => { ev.stopPropagation(); el.classList.add('hidden'); clearTimeout(toastT); action.fn(); };
+    toastT = setTimeout(() => el.classList.add('hidden'), 5200);
+  } else {
+    el.textContent = t;
+    toastT = setTimeout(() => el.classList.add('hidden'), 2200);
+  }
+  el.classList.remove('hidden');
+}
 function openSheet(html, onMount) { $('#sheetBody').innerHTML = html; $('#sheet').classList.remove('hidden'); onMount && onMount($('#sheetBody')); }
 function closeSheet() { $('#sheet').classList.add('hidden'); $('#sheetBody').innerHTML = ''; }
 $('.sheet-backdrop').addEventListener('click', closeSheet);
 
 // ───────── 라우팅
 let curDate = todayStr();
+const SEL = {
+  diet: { on: false, set: new Set(), date: null },
+  log: { on: false, set: new Set(), date: null },
+  weight: { on: false, set: new Set() }
+};
+function syncSelDate(kind) {
+  const s = SEL[kind];
+  if (s.date !== curDate) { s.set.clear(); s.date = curDate; }
+}
+function selBarHtml(kind, count) {
+  const s = SEL[kind];
+  if (!s.on) return `<div class="selbar"><button type="button" class="btn sm ghost" data-sel="start"${count ? '' : ' disabled'}>선택</button></div>`;
+  const n = s.set.size;
+  return `<div class="selbar on"><button type="button" class="btn sm ghost" data-sel="all">전체 선택</button><button type="button" class="btn sm ghost" data-sel="off">취소</button><button type="button" class="btn sm danger" data-sel="del"${n ? '' : ' disabled'}>선택 삭제 (${n}개)</button></div>`;
+}
+function bindSelBar(el, kind, handlers) {
+  if (!el) return;
+  el.addEventListener('click', e => {
+    const b = e.target.closest('[data-sel]'); if (!b) return;
+    const s = SEL[kind], act = b.dataset.sel;
+    if (act === 'start') { s.on = true; s.set.clear(); handlers.redraw(); }
+    else if (act === 'off') { s.on = false; s.set.clear(); handlers.redraw(); }
+    else if (act === 'all') { handlers.selectAll(); handlers.redraw(); }
+    else if (act === 'del') handlers.del();
+  });
+}
 let histMode = 'date';
 let guideFilter = '전체', guideQuery = '', guideEquip = '전체', guideBrand = '전체';
 let chartMetric = {};
@@ -340,8 +378,10 @@ const setTitle = t => { $('#title').textContent = t; document.title = t + ' · �
 function renderLog() {
   setTitle(curDate === todayStr() ? '오늘' : '하루 기록');
   const items = db.workouts[curDate] || [];
+  syncSelDate('log');
   app.innerHTML = `
     ${dateBarHtml()}
+    ${selBarHtml('log', items.length)}
     <div id="todayDiet"></div>
     <h3 class="sec-h">🏋️ 운동</h3>
     ${routineTodayHtml()}
@@ -351,6 +391,20 @@ function renderLog() {
     <button class="btn primary block" id="addEx" style="min-height:56px;font-size:17px">＋ 운동 추가</button>`;
   renderDaySum();
   bindDateBar(renderLog);
+  bindSelBar($('.selbar'), 'log', {
+    redraw: renderLog,
+    selectAll: () => { (db.workouts[curDate] || []).forEach((_, i) => SEL.log.set.add(i)); },
+    del: () => {
+      const idxs = [...SEL.log.set];
+      if (!idxs.length) return;
+      if (!confirm(`선택한 ${idxs.length}개 운동을 삭제할까요?`)) return;
+      const snap = (db.workouts[curDate] || []).map(it => ({ exId: it.exId, sets: it.sets.map(s => ({ ...s })) }));
+      db.workouts[curDate] = (db.workouts[curDate] || []).filter((_, i) => !SEL.log.set.has(i));
+      if (!db.workouts[curDate].length) delete db.workouts[curDate];
+      save(); SEL.log.on = false; SEL.log.set.clear(); renderLog();
+      toast(`${idxs.length}개 운동을 삭제했어요`, { lbl: '실행 취소', fn: () => { db.workouts[curDate] = snap; save(); renderLog(); toast('되돌렸어요'); } });
+    }
+  });
   $('#todayDiet').innerHTML = todayDietHtml();
   $('#todayDiet').onclick = e => { if (e.target.closest('[data-go]')) go(e.target.closest('[data-go]').dataset.go); };
   $('#addEx').onclick = () => openPicker(id => addExercise(id));
@@ -382,11 +436,12 @@ function exCard(it, i) {
       <button class="mini del" data-act="del" aria-label="세트 삭제">✕</button>
     </div>`;
   }).join('');
-  return `<section class="card ex-card" data-i="${i}" data-ex="${esc(it.exId)}">
+  return `<section class="card ex-card${SEL.log.on ? ' sel-mode' : ''}${SEL.log.on && SEL.log.set.has(i) ? ' sel-on' : ''}" data-i="${i}" data-ex="${esc(it.exId)}">
     <div class="ex-head">
-      <div><h2 class="ex-name"><button data-act="open">${esc(ex.name)} ›</button></h2>
+      ${SEL.log.on ? `<button type="button" class="sel-box" data-act="sel" aria-label="선택"></button>` : ''}
+      <div style="flex:1"><h2 class="ex-name"><button data-act="open">${esc(ex.name)} ›</button></h2>
         <div style="margin-top:4px"><span class="tag">${esc(ex.group)}</span>${ex.equip && ex.equip !== ex.group ? `<span class="tag">${esc(ex.equip)}</span>` : ''}${ex.rec ? `<span class="tag">권장 ${esc(recReps(ex))}</span>` : ''}</div></div>
-      <button class="mini del" data-act="rmEx" aria-label="운동 삭제" style="width:44px">🗑</button>
+      ${SEL.log.on ? '' : `<button class="mini del" data-act="rmEx" aria-label="운동 삭제" style="width:44px">🗑</button>`}
     </div>
     ${it.sets.length ? `<div class="set-row hdr"><div style="text-align:center">세트</div><div style="text-align:center">${wLbl}</div><div style="text-align:center">${unitR(ex)}</div><div></div><div></div></div>` : ''}
     <div class="rows">${rows}</div>
@@ -500,6 +555,16 @@ function bindCards() {
       renderDaySum();
     });
     card.addEventListener('click', e => {
+      if (SEL.log.on) {
+        const actEl = e.target.closest('[data-act]');
+        const act0 = actEl && actEl.dataset.act;
+        const setEdit = e.target.closest('input') || (act0 && ['add', 'dup', 'del', 'loadPrev'].includes(act0));
+        if (!setEdit) {
+          if (SEL.log.set.has(i)) SEL.log.set.delete(i); else SEL.log.set.add(i);
+          renderLog();
+          return;
+        }
+      }
       const b = e.target.closest('[data-act]'); if (!b) return;
       const act = b.dataset.act, it = item();
       const row = b.closest('.set-row'), k = row ? +row.dataset.k : -1;
@@ -534,7 +599,24 @@ function recentIds() {
   return seen;
 }
 function exListHtml(list, sub) {
-  return list.map(ex => `<button class="list-item" data-id="${esc(ex.id)}"><div><div class="t">${esc(ex.name)}</div><div class="s">${sub(ex)}</div></div><span class="chev">›</span></button>`).join('') || '<div class="empty">찾는 운동이 없어요.</div>';
+  return list.map(ex => `<button class="list-item" data-id="${esc(ex.id)}"><span class="ex-thumb" data-thumb="${esc(ex.id)}" aria-hidden="true"></span><div class="ex-list-main"><div class="t">${esc(ex.name)}</div><div class="s">${sub(ex)}</div></div><span class="chev">›</span></button>`).join('') || '<div class="empty">찾는 운동이 없어요.</div>';
+}
+function hydrateThumbs(root) {
+  if (!root || !window.FORMS || !window.FORMS.thumbHtml) return;
+  if (root._thumbIO) { root._thumbIO.disconnect(); root._thumbIO = null; }
+  const nodes = root.querySelectorAll('[data-thumb]');
+  const fill = el => {
+    if (el.dataset.filled) return;
+    el.dataset.filled = '1';
+    el.innerHTML = window.FORMS.thumbHtml(exById(el.dataset.thumb));
+  };
+  if (typeof IntersectionObserver !== 'function') { nodes.forEach(fill); return; }
+  const scrollRoot = root.closest('.sheet-panel');
+  const io = new IntersectionObserver(ents => {
+    ents.forEach(ent => { if (ent.isIntersecting) { fill(ent.target); io.unobserve(ent.target); } });
+  }, { root: scrollRoot || null, rootMargin: '120px 0px', threshold: 0.01 });
+  root._thumbIO = io;
+  nodes.forEach(n => io.observe(n));
 }
 // 검색 정규화: 공백 무시 + 소문자 + 흔한 오타(컨→컬)
 const exNorm = t => String(t || '').toLowerCase().replace(/\s+/g, '').replace(/컨/g, '컬');
@@ -591,6 +673,7 @@ function openPicker(onPick) {
         const p = prevSession(ex.id, '9999-12-31');
         return `${brandTag(ex)}${esc(ex.group)}${ex.equip && ex.equip !== ex.group ? ' · ' + esc(ex.equip) : ''}${p ? ` · 최근 ${shortD(p.date)} ${esc(setsText(ex, p.sets.slice(0, 1)))}` : ''}`;
       });
+      hydrateThumbs($('#pl', body));
     };
     draw();
     $('#pq', body).addEventListener('input', e => { q = e.target.value.trim(); if (q && g === '최근') g = '전체'; draw(); });
@@ -660,6 +743,7 @@ function renderHistory() {
       const best = ex.type === 'weight' ? `최고 ${fmt(Math.max(...s.map(x => x.m.top)))}kg` : ex.type === 'assist' ? `최저 보조 ${fmt(Math.min(...s.map(x => x.m.low)))}kg` : ex.type === 'cardio' ? `최장 ${fmt(Math.max(...s.map(x => x.m.totalReps)))}분` : `최고 ${Math.max(...s.map(x => x.m.bestReps))}${unitR(ex)}`;
       return `${s.length}회 기록 · ${best} · 최근 ${shortD(last.date)}`;
     });
+    hydrateThumbs(hl);
     hl.onclick = e => { const b = e.target.closest('[data-id]'); if (b) go('#/ex/' + encodeURIComponent(b.dataset.id) + '/records'); };
   }
 }
@@ -798,6 +882,7 @@ function renderGuide() {
     const list = filterEx(guideQuery, guideFilter, guideEquip, guideBrand);
     $('#gn').textContent = `${list.length}개 운동${myBrands().length ? ` · 내 헬스장 기구(${myBrands().map(b => window.BRANDS[b]).join('·')}) 먼저` : ''}`;
     $('#gl').innerHTML = exListHtml(list, ex => brandTag(ex) + [ex.group, ex.equip !== ex.group ? ex.equip : '', ex.primary].filter(Boolean).map(esc).join(' · '));
+    hydrateThumbs($('#gl'));
   };
   draw();
   $('#gq').addEventListener('input', e => { guideQuery = e.target.value.trim(); draw(); });
@@ -852,7 +937,7 @@ function renderSettings() {
       <p class="small" style="margin:0">아이폰: 사파리 하단 <b>공유</b> → <b>홈 화면에 추가</b><br>안드로이드: 크롬 메뉴(⋮) → <b>홈 화면에 추가</b> 또는 <b>앱 설치</b><br><span class="muted">한 번 열고 나면 인터넷 없이도 동작해요.</span></p></div>
     <button class="btn block" id="evBtn" style="margin-bottom:12px">📚 계산·음식 데이터 근거 (논문·출처)</button>
     <button class="btn danger block" id="wipe">전체 기록 삭제</button>
-    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v9 · 상우님 전용 💪</p>`;
+    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v10 · 상우님 전용 💪</p>`;
   $('#evBtn').onclick = () => go('#/evidence');
   const fname = () => `fitlog-backup-${todayStr()}.json`;
   const markBackup = () => { db.meta.lastBackup = todayStr(); save(); };
@@ -1099,14 +1184,20 @@ function foodSub(f) {
   if (!per100(f)) return `${esc(f.serving)} · ${fmt(f.kcal)}kcal · 단백질 ${fmt(f.protein)}g`;
   const p = (f.por || [])[0], g = p ? p[1] : (f.each ? 1 : 100), m = macrosFor(f, g);
   const kcalTxt = m.kcal != null && m.kcal >= 10 ? Math.round(m.kcal).toLocaleString('ko-KR') : fmtMac(m.kcal);
-  return `${p ? esc(porLbl(f, p)) : (f.each ? '1회' : `100${uOf(f)}`)} ${kcalTxt}kcal · 단 ${fmtMac(m.protein)}g <span class="src-tag">${esc(f.src || '')}${f.est ? '·추정' : ''}</span>`;
+  return `${p ? esc(porLbl(f, p)) : (f.each ? '1회' : `100${uOf(f)}`)} ${kcalTxt}kcal · 단 ${fmtProtein(m.protein, f)}g <span class="src-tag">${esc(f.src || '')}${f.pEst || f.est ? '·추정' : ''}</span>`;
+}
+function fmtProtein(n, f) {
+  const base = fmtMac(n);
+  return (base !== '—' && f && f.pEst) ? '≈' + base : base;
 }
 let foodCat = null;
 function renderDiet() {
   setTitle(curDate === todayStr() ? '오늘의 식단' : '식단 기록');
   const meals = db.meals[curDate] || [];
   const w = db.weights[curDate];
+  syncSelDate('diet');
   app.innerHTML = `${dateBarHtml()}
+    ${selBarHtml('diet', meals.length)}
     <div class="card" id="dash">${dashHtml(curDate)}</div>
     <div class="card"><div class="row between"><b>⚖️ 체중</b><button class="btn sm ghost" id="wGo">그래프 ›</button></div>
       <div class="row" style="margin-top:8px"><input id="wIn" class="num-in" type="number" inputmode="decimal" step="0.1" min="20" max="400" placeholder="${latestWeight(curDate) ? fmt(latestWeight(curDate)) : '체중'}" value="${w ?? ''}" aria-label="체중 kg"><span class="muted">kg</span>
@@ -1117,15 +1208,38 @@ function renderDiet() {
       const kc = es.reduce((a, x) => a + x.e.kcal * x.e.qty, 0), pr = es.reduce((a, x) => a + x.e.protein * x.e.qty, 0);
       return `<section class="card meal" data-meal="${m}">
         <div class="row between"><h3 class="meal-h">${{ 아침: '🌅', 점심: '☀️', 저녁: '🌙', 간식: '🍪' }[m]} ${m}</h3><span class="small muted">${es.length ? `${fmt(kc)}kcal · 단 ${fmt(pr)}g` : ''}</span></div>
-        ${es.map(({ e, i }) => `<button class="food-row" data-i="${i}"><div><div class="t">${esc(e.name)}</div><div class="s">${esc(e.serving)}${e.qty !== 1 ? ` × ${fmt(e.qty)}` : ''}</div></div>
+        ${es.map(({ e, i }) => `<button class="food-row${SEL.diet.on ? ' sel-mode' : ''}${SEL.diet.on && SEL.diet.set.has(i) ? ' sel-on' : ''}" data-i="${i}">${SEL.diet.on ? '<span class="sel-box" aria-hidden="true"></span>' : ''}<div style="flex:1"><div class="t">${esc(e.name)}</div><div class="s">${esc(e.serving)}${e.qty !== 1 ? ` × ${fmt(e.qty)}` : ''}</div></div>
           <div class="r"><b>${fmt(e.kcal * e.qty)}</b><span>kcal</span><div class="s">단 ${fmt(e.protein * e.qty)}g</div></div></button>`).join('')}
         <button class="btn sm block ghost add-food" data-meal="${m}">＋ ${m} 추가</button></section>`;
     }).join('')}
     <button class="btn block" id="pasteBtn">📋 코치 데이터 붙여넣기</button>
     <p class="muted small" style="margin:12px 4px">ⓘ 음식 값은 농촌진흥청 국가표준식품성분표·식약처 식품영양성분DB·USDA 자료의 100g당 값이에요. 같은 음식도 조리법·제품·양에 따라 달라요. <a href="#/evidence">근거 보기</a></p>`;
   bindDateBar(renderDiet);
+  bindSelBar($('.selbar'), 'diet', {
+    redraw: renderDiet,
+    selectAll: () => { (db.meals[curDate] || []).forEach((_, i) => SEL.diet.set.add(i)); },
+    del: () => {
+      const idxs = [...SEL.diet.set];
+      if (!idxs.length) return;
+      if (!confirm(`선택한 ${idxs.length}개 음식을 삭제할까요?`)) return;
+      const snap = (db.meals[curDate] || []).map(e => ({ ...e }));
+      db.meals[curDate] = (db.meals[curDate] || []).filter((_, i) => !SEL.diet.set.has(i));
+      if (!db.meals[curDate].length) delete db.meals[curDate];
+      save(); SEL.diet.on = false; SEL.diet.set.clear(); renderDiet();
+      toast(`${idxs.length}개 음식을 삭제했어요`, { lbl: '실행 취소', fn: () => { db.meals[curDate] = snap; save(); renderDiet(); toast('되돌렸어요'); } });
+    }
+  });
   app.querySelectorAll('.add-food').forEach(b => b.onclick = () => openFoodPicker(b.dataset.meal));
-  app.querySelectorAll('.food-row').forEach(b => b.onclick = () => { const e = db.meals[curDate][+b.dataset.i]; openAmount({ ...e }, { meal: e.meal, editIndex: +b.dataset.i }); });
+  app.querySelectorAll('.food-row').forEach(b => b.onclick = () => {
+    const i = +b.dataset.i;
+    if (SEL.diet.on) {
+      if (SEL.diet.set.has(i)) SEL.diet.set.delete(i); else SEL.diet.set.add(i);
+      renderDiet();
+      return;
+    }
+    const e = db.meals[curDate][i];
+    openAmount({ ...e }, { meal: e.meal, editIndex: i });
+  });
   $('#pasteBtn').onclick = () => openPasteImport();
   $('#wGo').onclick = () => go('#/weight');
   $('#wSave').onclick = () => saveWeight(curDate, $('#wIn').value, renderDiet);
@@ -1220,9 +1334,10 @@ function srcHtml(f) {
   const v = per100(f), u = uOf(f);
   const basis = f.each ? '1회 제공량당' : `100${u}당`;
   return `<div class="srcbox small">
-    <div><b>${basis}</b> ${fmtMac(v.kcal)}kcal · 단백질 ${fmtMac(v.protein)}g · 탄수 ${fmtMac(v.carbs)}g · 지방 ${fmtMac(v.fat)}g</div>
+    <div><b>${basis}</b> ${fmtMac(v.kcal)}kcal · 단백질 ${fmtProtein(v.protein, f)}g · 탄수 ${fmtMac(v.carbs)}g · 지방 ${fmtMac(v.fat)}g</div>
     ${f.state ? `<div>상태: ${esc(f.state)}</div>` : ''}
     <div class="muted">출처: ${f.src === '식약처 제품' ? esc(f.srcNote) : `${esc(SRC_LBL[f.src] || f.src || '')}${f.srcName ? ` — ${esc(f.srcName)}` : ''}${f.srcNote && f.src !== '직접 입력' ? `<br>${esc(f.srcNote)}` : ''}`}</div>
+    ${f.pEst ? '<div class="warn">단백질은 추정값이에요(≈). 칼로리는 공식 값 그대로예요.</div>' : ''}
     ${f.est ? '<div class="warn">여러 재료가 섞인 음식이라 집·식당마다 차이가 커요(추정치).</div>' : ''}
     ${f.note ? `<div>💡 ${esc(f.note)}</div>` : ''}
     ${(f.por || []).some(p => p[0].endsWith('≈')) ? '<div class="muted">"약"이 붙은 분량은 일반적인 어림값이에요. 정확히 하려면 g으로 입력하세요.</div>' : ''}
@@ -1261,7 +1376,7 @@ function openAmountG(f, e, { meal, editIndex }) {
       const ag = $('#ag', body);
       if (ag && fromInput !== 'g') ag.value = g ? r1(g) : '';
       $('#atot', body).innerHTML = `<div class="small muted" style="margin-bottom:6px">${g ? `총 <b id="agt">${fmt(g)}${u}</b>${a.p != null ? ` = ${esc(porLbl(f, por[a.p]))} × ${fmt(a.n)}` : ''}` : '양을 골라 주세요'}</div>
-        <div class="macro-grid four"><div><span class="muted small">칼로리</span><b id="akc">${fmtMac(mm.kcal)}</b></div><div><span class="muted small">단백질</span><b id="apr">${fmtMac(mm.protein)}g</b></div><div><span class="muted small">탄수</span><b>${fmtMac(mm.carbs)}g</b></div><div><span class="muted small">지방</span><b>${fmtMac(mm.fat)}g</b></div></div>`;
+        <div class="macro-grid four"><div><span class="muted small">칼로리</span><b id="akc">${fmtMac(mm.kcal)}</b></div><div><span class="muted small">단백질${f.pEst ? ' <span class="est-badge">추정</span>' : ''}</span><b id="apr">${fmtProtein(mm.protein, f)}g</b></div><div><span class="muted small">탄수</span><b>${fmtMac(mm.carbs)}g</b></div><div><span class="muted small">지방</span><b>${fmtMac(mm.fat)}g</b></div></div>`;
       $('#afav', body).textContent = db.favFoods.includes(f.id) ? '⭐ 즐겨찾기 해제' : '☆ 즐겨찾기에 추가';
     };
     draw();
@@ -1432,9 +1547,37 @@ function weightSectionHtml() {
     <div class="stat"><b class="${(db.profile.goal === 'cut' && last < first) || (db.profile.goal === 'bulk' && last > first) ? 'up' : ''}">${last - first > 0 ? '+' : ''}${fmt(last - first)}</b><span>시작 대비</span></div></div>
     <div class="chart-wrap">${weightChartSvg(pts)}</div>
     <p class="muted small" style="margin:0 4px 10px">하루하루 체중은 수분·식사로 1kg 넘게 오르내려요. 7일 평균선의 방향을 보세요.</p>
-    ${ks.slice().reverse().map(d => `<div class="list-item"><div><div class="t">${labelD(d)}</div><div class="s">7일 평균 ${fmt(avg7(d))}kg</div></div><div class="row"><b>${fmt(db.weights[d])}kg</b><button class="mini del" data-wdel="${d}" aria-label="삭제" style="width:44px">✕</button></div></div>`).join('')}`;
+    ${selBarHtml('weight', ks.length)}
+    ${ks.slice().reverse().map(d => `<div class="list-item${SEL.weight.on ? ' sel-mode' : ''}${SEL.weight.on && SEL.weight.set.has(d) ? ' sel-on' : ''}" data-wsel="${d}">${SEL.weight.on ? '<span class="sel-box" aria-hidden="true"></span>' : ''}<div style="flex:1"><div class="t">${labelD(d)}</div><div class="s">7일 평균 ${fmt(avg7(d))}kg</div></div><div class="row"><b>${fmt(db.weights[d])}kg</b>${SEL.weight.on ? '' : `<button class="mini del" data-wdel="${d}" aria-label="삭제" style="width:44px">✕</button>`}</div></div>`).join('')}`;
 }
 function bindWeightSection(el, rerender) {
+  bindSelBar(el.querySelector('.selbar'), 'weight', {
+    redraw: rerender,
+    selectAll: () => { Object.keys(db.weights).forEach(d => SEL.weight.set.add(d)); },
+    del: () => {
+      const dates = [...SEL.weight.set];
+      if (!dates.length) return;
+      if (!confirm(`선택한 ${dates.length}개 체중 기록을 삭제할까요?`)) return;
+      const snap = { ...db.weights };
+      dates.forEach(d => delete db.weights[d]);
+      save(); SEL.weight.on = false; SEL.weight.set.clear(); rerender();
+      toast(`${dates.length}개 체중 기록을 삭제했어요`, { lbl: '실행 취소', fn: () => {
+        Object.keys(db.weights).forEach(k => delete db.weights[k]);
+        Object.assign(db.weights, snap);
+        save(); rerender(); toast('되돌렸어요');
+      } });
+    }
+  });
+  if (SEL.weight.on) {
+    el.querySelectorAll('[data-wsel]').forEach(row => {
+      row.addEventListener('click', e => {
+        if (e.target.closest('[data-wdel]')) return;
+        const d = row.dataset.wsel;
+        if (SEL.weight.set.has(d)) SEL.weight.set.delete(d); else SEL.weight.set.add(d);
+        rerender();
+      });
+    });
+  }
   el.querySelectorAll('[data-wdel]').forEach(b => b.onclick = () => { if (confirm(`${labelD(b.dataset.wdel)} 체중 기록을 지울까요?`)) { delete db.weights[b.dataset.wdel]; save(); rerender(); } });
 }
 function renderWeightPage() {
@@ -1750,6 +1893,7 @@ function openSwap(id, onPick) {
   openSheet(`<h2>바꾸기</h2><p class="muted small" style="margin:0 0 8px">지금: <b>${esc(ex.name)}</b><br>같은 동작·같은 부위 운동이에요${myGym() ? ` (${esc(myGym().short)}: ${esc(myGym().rankKo.slice(0, 3).join(' → '))} 순)` : myBrands().length ? ' (내 헬스장 기구 먼저)' : ''}.</p>
     <div id="swl">${exListHtml(list.slice(0, 40), e => brandTag(e) + esc([e.equip, e.primary].filter(Boolean).join(' · ')))}</div>
     <button class="btn block" id="swAll" style="margin-top:6px">🔎 전체 목록에서 고르기</button>`, body => {
+    hydrateThumbs($('#swl', body));
     $('#swl', body).onclick = e => { const b = e.target.closest('[data-id]'); if (b) onPick(b.dataset.id); };
     $('#swAll', body).onclick = () => openPicker(onPick);
   });
