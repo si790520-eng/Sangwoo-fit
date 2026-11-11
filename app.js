@@ -313,9 +313,74 @@ function toast(t, action) {
   }
   el.classList.remove('hidden');
 }
-function openSheet(html, onMount) { $('#sheetBody').innerHTML = html; $('#sheet').classList.remove('hidden'); onMount && onMount($('#sheetBody')); }
-function closeSheet() { $('#sheet').classList.add('hidden'); $('#sheetBody').innerHTML = ''; }
-$('.sheet-backdrop').addEventListener('click', closeSheet);
+const ovStack = [];
+let ovIgnorePop = false;
+const ovWaiters = [];
+function flushOvWaiters() { while (ovWaiters.length) ovWaiters.shift()(); }
+function popOverlayHistory() {
+  return new Promise(resolve => {
+    ovIgnorePop = true;
+    ovWaiters.push(resolve);
+    history.back();
+    setTimeout(() => {
+      const i = ovWaiters.indexOf(resolve);
+      if (i >= 0) { ovWaiters.splice(i, 1); ovIgnorePop = false; resolve(); }
+    }, 400);
+  });
+}
+function pushOverlay(entry) {
+  ovStack.push(entry);
+  history.pushState({ ...(history.state || {}), flOv: ovStack.length, flT: entry.type }, '');
+}
+function closeTopOverlay(fromPop) {
+  const top = ovStack.pop();
+  if (!top) return Promise.resolve();
+  top.close();
+  return fromPop ? Promise.resolve() : popOverlayHistory();
+}
+window.addEventListener('popstate', () => {
+  if (ovIgnorePop) { ovIgnorePop = false; flushOvWaiters(); return; }
+  if (ovStack.length) closeTopOverlay(true);
+});
+let sheetCloseHook = null;
+function hideSheetUI() {
+  $('#sheet').classList.add('hidden');
+  $('#sheetBody').innerHTML = '';
+  if (sheetCloseHook) { const h = sheetCloseHook; sheetCloseHook = null; h(); }
+}
+function openSheet(html, onMount) {
+  const already = !$('#sheet').classList.contains('hidden');
+  if (already && sheetCloseHook) { const h = sheetCloseHook; sheetCloseHook = null; h(); }
+  $('#sheetBody').innerHTML = html;
+  $('#sheet').classList.remove('hidden');
+  onMount && onMount($('#sheetBody'));
+  if (!already) pushOverlay({ type: 'sheet', close: hideSheetUI });
+}
+function closeSheet() {
+  if ($('#sheet').classList.contains('hidden')) return Promise.resolve();
+  if (ovStack.length && ovStack[ovStack.length - 1].type === 'sheet') return closeTopOverlay(false);
+  hideSheetUI();
+  return Promise.resolve();
+}
+$('.sheet-backdrop').addEventListener('click', () => { closeSheet(); });
+function appConfirm(msg) {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = v => {
+      if (done) return;
+      done = true;
+      sheetCloseHook = null;
+      Promise.resolve(closeSheet()).then(() => resolve(!!v));
+    };
+    openSheet(`<h2>확인</h2><p style="margin:0 0 16px">${esc(msg)}</p>
+      <div class="row"><button type="button" class="btn ghost" id="cfno" style="flex:1">취소</button>
+      <button type="button" class="btn danger" id="cfyes" style="flex:2">확인</button></div>`, body => {
+      $('#cfno', body).onclick = () => finish(false);
+      $('#cfyes', body).onclick = () => finish(true);
+    });
+    sheetCloseHook = () => finish(false);
+  });
+}
 
 // ───────── 라우팅
 let curDate = todayStr();
@@ -330,17 +395,96 @@ function syncSelDate(kind) {
 }
 function selBarHtml(kind, count) {
   const s = SEL[kind];
-  if (!s.on) return `<div class="selbar"><button type="button" class="btn sm ghost" data-sel="start"${count ? '' : ' disabled'}>선택</button></div>`;
+  const hint = `<p class="sel-hint">길게 눌러도 선택돼요</p>`;
+  if (!s.on) return `<div class="selbar"><button type="button" class="btn sm ghost" data-sel="start"${count ? '' : ' disabled'}>선택</button></div>${hint}`;
   const n = s.set.size;
-  return `<div class="selbar on"><button type="button" class="btn sm ghost" data-sel="all">전체 선택</button><button type="button" class="btn sm ghost" data-sel="off">취소</button><button type="button" class="btn sm danger" data-sel="del"${n ? '' : ' disabled'}>선택 삭제 (${n}개)</button></div>`;
+  return `<div class="selbar on"><button type="button" class="btn sm ghost" data-sel="all">전체 선택</button><button type="button" class="btn sm ghost" data-sel="off">취소</button><button type="button" class="btn sm danger" data-sel="del"${n ? '' : ' disabled'}>선택 삭제 (${n}개)</button></div>${hint}`;
+}
+let eatNextClick = false, eatClickT = 0, eatX = 0, eatY = 0;
+function consumeNextClick(x, y, ms) {
+  eatNextClick = true;
+  if (typeof x === 'number') { eatX = x; eatY = y; }
+  clearTimeout(eatClickT);
+  eatClickT = setTimeout(() => { eatNextClick = false; }, ms == null ? 700 : ms);
+}
+document.addEventListener('click', e => {
+  if (!eatNextClick) return;
+  if (Math.hypot((e.clientX || 0) - eatX, (e.clientY || 0) - eatY) > 28) return;
+  eatNextClick = false;
+  clearTimeout(eatClickT);
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+}, true);
+function bindLongPress(el, { onLong, ignore } = {}) {
+  const HOLD = 500, LIMIT = 10;
+  let tid = 0, x0 = 0, y0 = 0, active = false, pid = null, fired = false;
+  const stop = () => {
+    if (tid) { clearTimeout(tid); tid = 0; }
+    active = false;
+    pid = null;
+    window.removeEventListener('pointermove', onMove, true);
+    window.removeEventListener('pointerup', onUp, true);
+    window.removeEventListener('pointercancel', onUp, true);
+  };
+  const onMove = e => {
+    if (!active || (pid != null && e.pointerId !== pid)) return;
+    if (Math.hypot(e.clientX - x0, e.clientY - y0) > LIMIT) stop();
+  };
+  const onUp = e => {
+    if (pid != null && e.pointerId !== pid) return;
+    if (fired) {
+      e.preventDefault();
+      consumeNextClick(x0, y0, 350);
+    }
+    fired = false;
+    stop();
+  };
+  el.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (ignore && ignore(e)) return;
+    x0 = e.clientX; y0 = e.clientY; active = true; pid = e.pointerId; fired = false;
+    tid = setTimeout(() => {
+      tid = 0;
+      if (!active) return;
+      active = false;
+      fired = true;
+      consumeNextClick(x0, y0, 2000);
+      try { if (navigator.vibrate) navigator.vibrate(12); } catch (_) {}
+      onLong && onLong();
+    }, HOLD);
+    window.addEventListener('pointermove', onMove, true);
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onUp, true);
+  });
+  el.addEventListener('contextmenu', e => { e.preventDefault(); });
+}
+const selRedraw = { diet: null, log: null, weight: null };
+function enterSelect(kind, redraw) {
+  const s = SEL[kind];
+  if (redraw) selRedraw[kind] = redraw;
+  const rd = () => { const fn = selRedraw[kind]; fn && fn(); };
+  if (s.on) { rd(); return; }
+  s.on = true;
+  pushOverlay({ type: 'select', kind, close() { s.on = false; s.set.clear(); rd(); } });
+  rd();
+}
+function exitSelect(kind) {
+  const s = SEL[kind];
+  if (!s.on) return Promise.resolve();
+  if (ovStack.length && ovStack[ovStack.length - 1].type === 'select' && ovStack[ovStack.length - 1].kind === kind) return closeTopOverlay(false);
+  s.on = false; s.set.clear();
+  selRedraw[kind] && selRedraw[kind]();
+  return Promise.resolve();
 }
 function bindSelBar(el, kind, handlers) {
   if (!el) return;
+  selRedraw[kind] = handlers.redraw;
   el.addEventListener('click', e => {
     const b = e.target.closest('[data-sel]'); if (!b) return;
-    const s = SEL[kind], act = b.dataset.sel;
-    if (act === 'start') { s.on = true; s.set.clear(); handlers.redraw(); }
-    else if (act === 'off') { s.on = false; s.set.clear(); handlers.redraw(); }
+    const act = b.dataset.sel;
+    if (act === 'start') enterSelect(kind, handlers.redraw);
+    else if (act === 'off') exitSelect(kind);
     else if (act === 'all') { handlers.selectAll(); handlers.redraw(); }
     else if (act === 'del') handlers.del();
   });
@@ -354,6 +498,9 @@ document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () =>
 $('#backBtn').addEventListener('click', () => { if (history.length > 1) history.back(); else go('#/guide'); });
 
 function route() {
+  const si = ovStack.findIndex(o => o.type === 'sheet');
+  if (si >= 0) { ovStack.splice(si, 1); hideSheetUI(); }
+  else if (!$('#sheet').classList.contains('hidden')) hideSheetUI();
   const parts = (location.hash || '#/log').slice(2).split('/');
   const tab = parts[0] || 'log';
   const tabFor = tab === 'ex' ? (parts[2] === 'guide' ? 'guide' : 'history') : tab === 'weight' ? 'diet' : tab === 'evidence' || tab === 'gym' ? 'settings' : tab === 'routine' ? 'log' : tab;
@@ -394,14 +541,14 @@ function renderLog() {
   bindSelBar($('.selbar'), 'log', {
     redraw: renderLog,
     selectAll: () => { (db.workouts[curDate] || []).forEach((_, i) => SEL.log.set.add(i)); },
-    del: () => {
+    del: async () => {
       const idxs = [...SEL.log.set];
       if (!idxs.length) return;
-      if (!confirm(`선택한 ${idxs.length}개 운동을 삭제할까요?`)) return;
+      if (!await appConfirm(`선택한 ${idxs.length}개 운동을 삭제할까요?`)) return;
       const snap = (db.workouts[curDate] || []).map(it => ({ exId: it.exId, sets: it.sets.map(s => ({ ...s })) }));
       db.workouts[curDate] = (db.workouts[curDate] || []).filter((_, i) => !SEL.log.set.has(i));
       if (!db.workouts[curDate].length) delete db.workouts[curDate];
-      save(); SEL.log.on = false; SEL.log.set.clear(); renderLog();
+      save(); await exitSelect('log');
       toast(`${idxs.length}개 운동을 삭제했어요`, { lbl: '실행 취소', fn: () => { db.workouts[curDate] = snap; save(); renderLog(); toast('되돌렸어요'); } });
     }
   });
@@ -554,6 +701,10 @@ function bindCards() {
       $('#cmp-' + i).innerHTML = cmpHtml(item());
       renderDaySum();
     });
+    bindLongPress(card, {
+      ignore: e => !!e.target.closest('input, textarea, select, .mini, .actions, [data-act="dup"], [data-act="del"], [data-act="add"], [data-act="loadPrev"], [data-act="rmEx"]'),
+      onLong: () => { SEL.log.set.add(i); enterSelect('log', renderLog); }
+    });
     card.addEventListener('click', e => {
       if (SEL.log.on) {
         const actEl = e.target.closest('[data-act]');
@@ -570,8 +721,11 @@ function bindCards() {
       const row = b.closest('.set-row'), k = row ? +row.dataset.k : -1;
       if (act === 'open') return go('#/ex/' + encodeURIComponent(it.exId) + '/records');
       if (act === 'rmEx') {
-        if (it.sets.some(s => s.r > 0) && !confirm(`${exById(it.exId).name} 기록을 삭제할까요?`)) return;
-        db.workouts[curDate].splice(i, 1); save(); renderLog(); return toast('삭제했어요');
+        (async () => {
+          if (it.sets.some(s => s.r > 0) && !await appConfirm(`${exById(it.exId).name} 기록을 삭제할까요?`)) return;
+          db.workouts[curDate].splice(i, 1); save(); renderLog(); toast('삭제했어요');
+        })();
+        return;
       }
       if (act === 'add') { const last = it.sets[it.sets.length - 1]; it.sets.push(last ? { ...last } : { w: null, r: null }); }
       if (act === 'dup') it.sets.splice(k + 1, 0, { ...it.sets[k] });
@@ -937,7 +1091,7 @@ function renderSettings() {
       <p class="small" style="margin:0">아이폰: 사파리 하단 <b>공유</b> → <b>홈 화면에 추가</b><br>안드로이드: 크롬 메뉴(⋮) → <b>홈 화면에 추가</b> 또는 <b>앱 설치</b><br><span class="muted">한 번 열고 나면 인터넷 없이도 동작해요.</span></p></div>
     <button class="btn block" id="evBtn" style="margin-bottom:12px">📚 계산·음식 데이터 근거 (논문·출처)</button>
     <button class="btn danger block" id="wipe">전체 기록 삭제</button>
-    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v10 · 상우님 전용 💪</p>`;
+    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v11 · 상우님 전용 💪</p>`;
   $('#evBtn').onclick = () => go('#/evidence');
   const fname = () => `fitlog-backup-${todayStr()}.json`;
   const markBackup = () => { db.meta.lastBackup = todayStr(); save(); };
@@ -965,7 +1119,7 @@ function renderSettings() {
       const d = JSON.parse(await f.text());
       if (!validDb(d)) throw new Error('형식');
       const inc = normalize(d);
-      if (mode === 'replace') { if (!confirm('지금 기록을 모두 지우고 백업으로 바꿀까요?')) return; db = inc; }
+      if (mode === 'replace') { if (!await appConfirm('지금 기록을 모두 지우고 백업으로 바꿀까요?')) return; db = inc; }
       else {
         for (const c of inc.custom) if (!db.custom.some(x => x.id === c.id)) db.custom.push(c);
         for (const [date, items] of Object.entries(inc.workouts)) {
@@ -987,9 +1141,9 @@ function renderSettings() {
     } catch (err) { toast('백업 파일을 읽을 수 없어요. 핏로그 JSON 파일인지 확인해 주세요'); }
     e.target.value = '';
   };
-  $('#wipe').onclick = () => {
-    if (!confirm('정말 모든 기록을 삭제할까요? 되돌릴 수 없어요.')) return;
-    if (!confirm('마지막 확인: 백업은 해두셨나요? 삭제할게요.')) return;
+  $('#wipe').onclick = async () => {
+    if (!await appConfirm('정말 모든 기록을 삭제할까요? 되돌릴 수 없어요.')) return;
+    if (!await appConfirm('마지막 확인: 백업은 해두셨나요? 삭제할게요.')) return;
     db = emptyDb(); save(); toast('모두 삭제했어요'); renderSettings();
   };
 }
@@ -1218,27 +1372,31 @@ function renderDiet() {
   bindSelBar($('.selbar'), 'diet', {
     redraw: renderDiet,
     selectAll: () => { (db.meals[curDate] || []).forEach((_, i) => SEL.diet.set.add(i)); },
-    del: () => {
+    del: async () => {
       const idxs = [...SEL.diet.set];
       if (!idxs.length) return;
-      if (!confirm(`선택한 ${idxs.length}개 음식을 삭제할까요?`)) return;
+      if (!await appConfirm(`선택한 ${idxs.length}개 음식을 삭제할까요?`)) return;
       const snap = (db.meals[curDate] || []).map(e => ({ ...e }));
       db.meals[curDate] = (db.meals[curDate] || []).filter((_, i) => !SEL.diet.set.has(i));
       if (!db.meals[curDate].length) delete db.meals[curDate];
-      save(); SEL.diet.on = false; SEL.diet.set.clear(); renderDiet();
+      save(); await exitSelect('diet');
       toast(`${idxs.length}개 음식을 삭제했어요`, { lbl: '실행 취소', fn: () => { db.meals[curDate] = snap; save(); renderDiet(); toast('되돌렸어요'); } });
     }
   });
   app.querySelectorAll('.add-food').forEach(b => b.onclick = () => openFoodPicker(b.dataset.meal));
-  app.querySelectorAll('.food-row').forEach(b => b.onclick = () => {
-    const i = +b.dataset.i;
-    if (SEL.diet.on) {
-      if (SEL.diet.set.has(i)) SEL.diet.set.delete(i); else SEL.diet.set.add(i);
-      renderDiet();
-      return;
-    }
-    const e = db.meals[curDate][i];
-    openAmount({ ...e }, { meal: e.meal, editIndex: i });
+  app.querySelectorAll('.food-row').forEach(b => {
+    const iOf = () => +b.dataset.i;
+    bindLongPress(b, { onLong: () => { SEL.diet.set.add(iOf()); enterSelect('diet', renderDiet); } });
+    b.onclick = () => {
+      const i = iOf();
+      if (SEL.diet.on) {
+        if (SEL.diet.set.has(i)) SEL.diet.set.delete(i); else SEL.diet.set.add(i);
+        renderDiet();
+        return;
+      }
+      const e = db.meals[curDate][i];
+      openAmount({ ...e }, { meal: e.meal, editIndex: i });
+    };
   });
   $('#pasteBtn').onclick = () => openPasteImport();
   $('#wGo').onclick = () => go('#/weight');
@@ -1554,13 +1712,13 @@ function bindWeightSection(el, rerender) {
   bindSelBar(el.querySelector('.selbar'), 'weight', {
     redraw: rerender,
     selectAll: () => { Object.keys(db.weights).forEach(d => SEL.weight.set.add(d)); },
-    del: () => {
+    del: async () => {
       const dates = [...SEL.weight.set];
       if (!dates.length) return;
-      if (!confirm(`선택한 ${dates.length}개 체중 기록을 삭제할까요?`)) return;
+      if (!await appConfirm(`선택한 ${dates.length}개 체중 기록을 삭제할까요?`)) return;
       const snap = { ...db.weights };
       dates.forEach(d => delete db.weights[d]);
-      save(); SEL.weight.on = false; SEL.weight.set.clear(); rerender();
+      save(); await exitSelect('weight');
       toast(`${dates.length}개 체중 기록을 삭제했어요`, { lbl: '실행 취소', fn: () => {
         Object.keys(db.weights).forEach(k => delete db.weights[k]);
         Object.assign(db.weights, snap);
@@ -1568,17 +1726,21 @@ function bindWeightSection(el, rerender) {
       } });
     }
   });
-  if (SEL.weight.on) {
-    el.querySelectorAll('[data-wsel]').forEach(row => {
+  el.querySelectorAll('[data-wsel]').forEach(row => {
+    bindLongPress(row, {
+      ignore: e => !!e.target.closest('[data-wdel]'),
+      onLong: () => { SEL.weight.set.add(row.dataset.wsel); enterSelect('weight', rerender); }
+    });
+    if (SEL.weight.on) {
       row.addEventListener('click', e => {
         if (e.target.closest('[data-wdel]')) return;
         const d = row.dataset.wsel;
         if (SEL.weight.set.has(d)) SEL.weight.set.delete(d); else SEL.weight.set.add(d);
         rerender();
       });
-    });
-  }
-  el.querySelectorAll('[data-wdel]').forEach(b => b.onclick = () => { if (confirm(`${labelD(b.dataset.wdel)} 체중 기록을 지울까요?`)) { delete db.weights[b.dataset.wdel]; save(); rerender(); } });
+    }
+  });
+  el.querySelectorAll('[data-wdel]').forEach(b => b.onclick = async () => { if (await appConfirm(`${labelD(b.dataset.wdel)} 체중 기록을 지울까요?`)) { delete db.weights[b.dataset.wdel]; save(); rerender(); } });
 }
 function renderWeightPage() {
   setTitle('체중 추세');
@@ -1846,8 +2008,8 @@ function renderRoutine(parts = []) {
     app.innerHTML = `<div class="card"><p style="margin:0">${esc(t.desc)}</p>${gymHint ? gymHint : myBrands().length ? `<p class="small muted" style="margin:6px 0 0">🏷️ 내 헬스장 기구(${myBrands().map(b => window.BRANDS[b]).join('·')})로 맞췄어요. 시작한 뒤 종목마다 바꿀 수 있어요.</p>` : `<p class="small muted" style="margin:6px 0 0">설정 → <b>내 헬스장 기구</b>에서 짐80·파나타를 고르면 그 기구로 바꿔 드려요.</p>`}</div>
       ${weeklyHtml(days)}${days.map((d, i) => dayCardHtml(d, i, false)).join('')}
       <button class="btn primary block" id="useTpl" style="min-height:54px">✅ 이 루틴으로 시작</button>`;
-    $('#useTpl').onclick = () => {
-      if (db.routine && !confirm('지금 루틴을 이 루틴으로 바꿀까요? (운동 기록은 그대로예요)')) return;
+    $('#useTpl').onclick = async () => {
+      if (db.routine && !await appConfirm('지금 루틴을 이 루틴으로 바꿀까요? (운동 기록은 그대로예요)')) return;
       db.routine = { tpl: t.id, days, next: 0, log: {} }; save(); toast('루틴을 저장했어요! 오늘 탭에서 바로 시작할 수 있어요'); go('#/routine');
     };
     return;
@@ -1867,8 +2029,8 @@ function renderRoutine(parts = []) {
     <div class="row" style="margin-bottom:10px"><button class="btn" id="rtList" style="flex:1">📚 다른 루틴 고르기</button>${t ? `<button class="btn" id="rtReset" style="flex:1">↺ 처음 구성으로</button>` : ''}</div>
     <button class="btn danger block" id="rtDel">루틴 끄기</button>`;
   $('#rtList').onclick = () => go('#/routine/list');
-  if ($('#rtReset')) $('#rtReset').onclick = () => { if (!confirm('바꾼 내용을 지우고 처음 구성(내 헬스장 기구 기준)으로 되돌릴까요?')) return; r.days = buildTpl(t); r.next = 0; save(); renderRoutine(); toast('처음 구성으로 되돌렸어요'); };
-  $('#rtDel').onclick = () => { if (!confirm('루틴을 끌까요? 운동 기록은 그대로 남아요.')) return; db.routine = null; save(); go('#/routine/list'); };
+  if ($('#rtReset')) $('#rtReset').onclick = async () => { if (!await appConfirm('바꾼 내용을 지우고 처음 구성(내 헬스장 기구 기준)으로 되돌릴까요?')) return; r.days = buildTpl(t); r.next = 0; save(); renderRoutine(); toast('처음 구성으로 되돌렸어요'); };
+  $('#rtDel').onclick = async () => { if (!await appConfirm('루틴을 끌까요? 운동 기록은 그대로 남아요.')) return; db.routine = null; save(); go('#/routine/list'); };
   $('#rtDays').onclick = e => {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const di = +b.closest('[data-d]').dataset.d, day = r.days[di], row = b.closest('[data-k]'), k = row ? +row.dataset.k : -1, act = b.dataset.act;
@@ -1984,5 +2146,5 @@ route();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
-window.__fitlog = { get db() { return db; }, metrics, sessionsFor, isPlateau, plateauInfo, progRange, minInc, pct: (id, m) => pctValue(exById(id), m), nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods, filterEx, exById, keyMetrics, weeklySets, buildTpl, RT_TPL, pickSlot, swapCands, targetSets, normRoutine, myBrands, myGym, rtVisible, GYMS: window.GYMS };
+window.__fitlog = { get db() { return db; }, overlays: () => ovStack.map(o => o.type), metrics, sessionsFor, isPlateau, plateauInfo, progRange, minInc, pct: (id, m) => pctValue(exById(id), m), nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods, filterEx, exById, keyMetrics, weeklySets, buildTpl, RT_TPL, pickSlot, swapCands, targetSets, normRoutine, myBrands, myGym, rtVisible, GYMS: window.GYMS };
 })();

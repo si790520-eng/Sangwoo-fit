@@ -207,7 +207,10 @@ details.guide summary{cursor:pointer;font-weight:700;font-size:14px}
 /* v10: 다중 선택 삭제 · 운동 썸네일 · 단백질 추정 */
 .toast-act{background:none;border:0;color:#15803d;font-weight:800;padding:0;cursor:pointer;white-space:nowrap}
 .est-badge{display:inline-block;margin-left:4px;padding:1px 6px;border-radius:999px;font-size:11px;font-weight:700;background:rgba(251,191,36,.16);color:var(--warn);vertical-align:middle}
-.selbar{display:flex;gap:8px;align-items:center;margin:0 0 12px;flex-wrap:wrap}
+.selbar{display:flex;gap:8px;align-items:center;margin:0 0 4px;flex-wrap:wrap}
+.sel-hint{margin:0 2px 12px;font-size:12px;color:var(--muted)}
+.food-row,.ex-card,.list-item[data-wsel]{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.ex-card input{-webkit-user-select:text;user-select:text}
 .selbar .btn[disabled]{opacity:.4;pointer-events:none}
 .sel-box{flex:none;width:22px;height:22px;border:2px solid var(--muted);border-radius:6px;background:transparent;position:relative;padding:0}
 .food-row.sel-on .sel-box,.ex-card.sel-on .sel-box,.list-item.sel-on .sel-box{background:var(--accent);border-color:var(--accent)}
