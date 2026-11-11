@@ -852,7 +852,7 @@ function renderSettings() {
       <p class="small" style="margin:0">아이폰: 사파리 하단 <b>공유</b> → <b>홈 화면에 추가</b><br>안드로이드: 크롬 메뉴(⋮) → <b>홈 화면에 추가</b> 또는 <b>앱 설치</b><br><span class="muted">한 번 열고 나면 인터넷 없이도 동작해요.</span></p></div>
     <button class="btn block" id="evBtn" style="margin-bottom:12px">📚 계산·음식 데이터 근거 (논문·출처)</button>
     <button class="btn danger block" id="wipe">전체 기록 삭제</button>
-    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v8 · 상우님 전용 💪</p>`;
+    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v9 · 상우님 전용 💪</p>`;
   $('#evBtn').onclick = () => go('#/evidence');
   const fname = () => `fitlog-backup-${todayStr()}.json`;
   const markBackup = () => { db.meta.lastBackup = todayStr(); save(); };
@@ -928,6 +928,10 @@ const DATA_SRCS = [
   ['식품의약품안전처 통합식품영양성분정보(음식)', '공공데이터포털 15100070. 외식·가정식 음식의 100g(ml)당 값과 1인분 중량. 찌개·볶음 등 섞인 음식은 추정치로 표시해요.', 'https://www.data.go.kr/data/15100070/fileData.do'],
   ['식품의약품안전처 통합식품영양성분정보(가공식품)', '공공데이터포털 15100066. 시판 닭가슴살·조미김·삼각김밥처럼 제품마다 다른 음식은 같은 종류 제품 여러 개의 100g당 중앙값을 써요.', 'https://www.data.go.kr/data/15100066/fileData.do'],
   ['USDA FoodData Central (SR Legacy)', '국내 자료에 없는 조리 상태(오븐에 구운 닭가슴살 등)와 웨이 프로틴·땅콩버터 등.', 'https://fdc.nal.usda.gov/'],
+  ['버거킹 공식 영양정보', 'burgerking.co.kr 현재 메뉴의 중량·열량·단백질(및 당류·포화지방·나트륨·카페인). 한국 외식 영양표시 관례상 총 탄수화물·총 지방은 표에 없는 항목이 많아요. 확인일 2026-11-11.', 'https://www.burgerking.co.kr/'],
+  ['맥도날드 공식 영양분석표', 'mcdonalds.co.kr 제품 영양분석표(표 수정일 2026.11.11). 중량·열량·단백질·포화지방·당·나트륨·카페인. 세트 열량이 범위로만 나온 항목은 값을 고르지 않아 빼 두었어요.', 'https://www.mcdonalds.co.kr/kor/menu/information/nutrition'],
+  ['롯데리아 공식 영양성분표', 'lotteeatz.com 영양성분표(게시 2026.10.29). 중량·열량·단백질 등. 세트 열량 범위는 빼 두었어요.', 'https://www.lotteeatz.com/upload/etc/ria/items.html'],
+  ['스타벅스 공식 메뉴 영양정보', 'starbucks.co.kr 음료·푸드 영양정보(음료는 Tall 사이즈 기준). 열량·단백질·탄수화물·지방. 확인일 2026-11-11.', 'https://www.starbucks.co.kr/menu/drink_list.do'],
 ];
 function renderEvidence() {
   setTitle('근거 · 출처');
@@ -970,7 +974,7 @@ function renderEvidence() {
       <p class="small muted">브랜드 기구 ${(window.BRAND_EX || []).length}개 · 짐80 ${(window.BRAND_EX || []).filter(e => e.brand === 'gym80').length} · 파나타 ${(window.BRAND_EX || []).filter(e => e.brand === 'panatta').length}</p></div>
     <div class="card ev"><h3>🍱 음식 데이터 출처</h3>
       ${DATA_SRCS.map(s => `<p class="small"><b>${s[0]}</b><br>${s[1]}<br><a href="${s[2]}" target="_blank" rel="noopener">${s[2]}</a></p>`).join('')}
-      <p class="small">모든 값은 100g(음료·국물은 100ml)당으로 저장해요. "한 줌", "1봉" 같은 분량은 제품 표시중량, 식약처 1인분 중량, 일반 계량 기준이고, <b>약</b>이 붙은 분량은 어림값이에요. 한 번 기록한 양은 다음에 같은 음식을 고를 때 그대로 기억해요.</p>
+      <p class="small">공공 DB 음식은 100g(음료·국물은 100ml)당으로 저장해요. 브랜드 공식 메뉴는 1회 제공량(단품 1개, 세트 1개, Tall 1잔 등) 값을 쓰기도 해요. 총 탄수화물·총 지방이 공식 표에 없으면 그 칸은 비워 두고 출처에 적어 두어요. "한 줌", "1봉" 같은 분량은 제품 표시중량, 식약처 1인분 중량, 일반 계량 기준이고, <b>약</b>이 붙은 분량은 어림값이에요. 한 번 기록한 양은 다음에 같은 음식을 고를 때 그대로 기억해요.</p>
       <p class="small muted">음식 수: ${window.FOODS.length}개 · 출처별 ${Object.entries(window.FOODS.reduce((a, f) => (a[f.src] = (a[f.src] || 0) + 1, a), {})).map(([k, v]) => `${k} ${v}`).join(' · ')}</p></div>
     <div class="card ev"><h3>📄 참고문헌</h3><ol class="refs small">${REFS.map(r => `<li id="ref-${r.k}">${esc(r.t)} <a href="https://doi.org/${r.doi}" target="_blank" rel="noopener">doi:${r.doi}</a></li>`).join('')}</ol>
       <p class="small muted">이 앱은 건강한 성인을 위한 일반 정보예요. 질환이 있거나 약을 먹고 있다면 의사·영양사와 상의하세요.</p></div>`;
@@ -1069,14 +1073,21 @@ function todayDietHtml() {
 
 // ───────── 식단 화면
 // 음식 DB(foods.js)는 100g(음료·국물은 100ml)당 값 + 이름 붙은 분량(por: [라벨, g])을 가져요.
+// brand_foods.js 의 each:true 항목은 k/p/c/f 가 1회 제공량당이에요(세트·감튀처럼 공식 중량이 없을 때).
 // 옛 방식(1회 제공량당 값) 직접입력 음식은 per100이 없으므로 "인분" 단위로만 다뤄요.
 const allFoods = () => [...window.FOODS, ...db.customFoods];
 const foodById = id => allFoods().find(f => f.id === id);
 const per100 = f => f && f.k != null ? { kcal: f.k, protein: f.p, carbs: f.c, fat: f.f } : null;
 const uOf = f => (f && f.unit) || 'g';
 const porLbl = (f, p) => /\d/.test(p[0]) && p[0].includes(String(p[1])) ? p[0].replace(/≈$/, '') : `${p[0].replace(/≈$/, '')} (${p[0].endsWith('≈') ? '약 ' : ''}${fmt(p[1])}${uOf(f)})`;
-const SRC_LBL = { '농진청': '농촌진흥청 국가표준식품성분표', '식약처': '식약처 식품영양성분DB(음식)', '식약처 제품': '식약처 가공식품DB', 'USDA': 'USDA FoodData Central', '직접 입력': '직접 입력' };
-function macrosFor(f, g) { const v = per100(f); return { kcal: v.kcal * g / 100, protein: v.protein * g / 100, carbs: v.carbs * g / 100, fat: v.fat * g / 100 }; }
+const SRC_LBL = { '농진청': '농촌진흥청 국가표준식품성분표', '식약처': '식약처 식품영양성분DB(음식)', '식약처 제품': '식약처 가공식품DB', 'USDA': 'USDA FoodData Central', '직접 입력': '직접 입력', '버거킹': '버거킹 공식 영양정보', '맥도날드': '맥도날드 공식 영양분석표', '롯데리아': '롯데리아 공식 영양성분표', '스타벅스': '스타벅스 공식 메뉴 영양정보' };
+const fmtMac = n => (n == null || Number.isNaN(Number(n))) ? '—' : fmt(n);
+const scaleMac = (v, factor) => v == null ? null : v * factor;
+function macrosFor(f, g) {
+  const v = per100(f);
+  const factor = f.each ? g : g / 100;
+  return { kcal: scaleMac(v.kcal, factor), protein: scaleMac(v.protein, factor), carbs: scaleMac(v.carbs, factor), fat: scaleMac(v.fat, factor) };
+}
 function defaultAmt(f) {
   const last = db.lastAmt[f.id];
   if (last && last.g > 0) return { ...last };
@@ -1086,8 +1097,9 @@ function defaultAmt(f) {
 }
 function foodSub(f) {
   if (!per100(f)) return `${esc(f.serving)} · ${fmt(f.kcal)}kcal · 단백질 ${fmt(f.protein)}g`;
-  const p = (f.por || [])[0], g = p ? p[1] : 100, m = macrosFor(f, g);
-  return `${p ? esc(porLbl(f, p)) : `100${uOf(f)}`} ${m.kcal >= 10 ? Math.round(m.kcal).toLocaleString('ko-KR') : fmt(m.kcal)}kcal · 단 ${fmt(m.protein)}g <span class="src-tag">${esc(f.src || '')}${f.est ? '·추정' : ''}</span>`;
+  const p = (f.por || [])[0], g = p ? p[1] : (f.each ? 1 : 100), m = macrosFor(f, g);
+  const kcalTxt = m.kcal != null && m.kcal >= 10 ? Math.round(m.kcal).toLocaleString('ko-KR') : fmtMac(m.kcal);
+  return `${p ? esc(porLbl(f, p)) : (f.each ? '1회' : `100${uOf(f)}`)} ${kcalTxt}kcal · 단 ${fmtMac(m.protein)}g <span class="src-tag">${esc(f.src || '')}${f.est ? '·추정' : ''}</span>`;
 }
 let foodCat = null;
 function renderDiet() {
@@ -1148,22 +1160,39 @@ function recentFoods() {
   return out;
 }
 const norm = s => String(s || '').replace(/[\s·()]/g, '').toLowerCase();
+const CHO = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';
+function choStr(s) {
+  return [...String(s || '')].map(ch => {
+    const c = ch.codePointAt(0);
+    if (c >= 0xAC00 && c <= 0xD7A3) return CHO[Math.floor((c - 0xAC00) / 588)];
+    return /[\s·()]/.test(ch) ? '' : ch.toLowerCase();
+  }).join('');
+}
 function searchFoods(q, list = allFoods()) {
   const s = norm(q); if (!s) return list;
+  const choOnly = /^[ㄱ-ㅎ0-9]+$/.test(s) && s.length >= 2;
   const scored = [];
   for (const f of list) {
     const n = norm(f.name), a = norm(f.aka) + norm(f.cat), words = String(f.aka || '').toLowerCase().split(/\s+/);
-    const sc = n === s ? 0 : words.includes(s) ? 1 : n.startsWith(s) ? 2 : n.includes(s) ? 3 : a.includes(s) ? 4 : -1;
-    if (sc >= 0) scored.push([sc, scored.length, f]);
+    let sc = n === s ? 0 : words.includes(s) ? 1 : n.startsWith(s) ? 2 : n.includes(s) ? 3 : a.includes(s) ? 4 : -1;
+    if (sc < 0 && choOnly) {
+      const cn = choStr(f.name), ca = choStr(f.aka || '');
+      if (cn.includes(s) || ca.includes(s)) sc = 5;
+    }
+    if (sc < 0) continue;
+    const bare = n.replace(/^(버거킹|맥도날드|롯데리아|스타벅스)/, '');
+    const exactBare = bare === s ? 0 : 1;
+    const setPen = (!s.includes('세트') && n.includes('세트')) ? 1 : 0;
+    scored.push([sc, exactBare, setPen, n.length, scored.length, f]);
   }
-  return scored.sort((x, y) => x[0] - y[0] || x[1] - y[1]).map(x => x[2]);
+  return scored.sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2] || x[3] - y[3] || x[4] - y[4]).map(x => x[5]);
 }
 function openFoodPicker(meal) {
   let q = '';
   let cat = foodCat || (recentFoods().length ? '최근' : '전체');
   const chips = ['최근', '즐겨찾기', '내 음식', '전체', ...window.FOOD_CATS];
   openSheet(`<h2>${meal}에 음식 추가</h2>
-    <input class="search" id="fq" placeholder="음식 검색 (예: 닭가슴살, 김, 황태채)" autocomplete="off">
+    <input class="search" id="fq" placeholder="음식 검색 (예: 몬스터와퍼, 감튀, 닭가슴살)" autocomplete="off">
     <div class="chips" id="fc"></div><div id="fl"></div>
     <button class="btn block" id="fcustom" style="margin-top:6px">✏️ 목록에 없어요 · 직접 입력</button>`, body => {
     let shown = [];
@@ -1172,7 +1201,7 @@ function openFoodPicker(meal) {
       let list = cat === '최근' ? recentFoods() : cat === '즐겨찾기' ? db.favFoods.map(foodById).filter(Boolean) : cat === '내 음식' ? db.customFoods : cat === '전체' ? allFoods() : allFoods().filter(f => f.cat === cat);
       if (q) list = searchFoods(q);
       shown = list;
-      $('#fl', body).innerHTML = list.slice(0, 120).map((f, i) => `<button class="list-item" data-k="${i}"><div><div class="t">${db.favFoods.includes(f.id) ? '⭐ ' : ''}${esc(f.name)}</div><div class="s">${foodSub(f)}</div></div><span class="chev">＋</span></button>`).join('')
+      $('#fl', body).innerHTML = list.slice(0, q ? 400 : 120).map((f, i) => `<button class="list-item" data-k="${i}"><div><div class="t">${db.favFoods.includes(f.id) ? '⭐ ' : ''}${esc(f.name)}</div><div class="s">${foodSub(f)}</div></div><span class="chev">＋</span></button>`).join('')
         || `<div class="empty" style="padding:20px">${cat === '즐겨찾기' && !q ? '음식을 추가할 때 ⭐를 누르면 여기 모여요.' : cat === '최근' && !q ? '최근 먹은 음식이 여기 표시돼요.' : '찾는 음식이 없어요. 아래에서 직접 입력해 주세요.'}</div>`;
     };
     draw();
@@ -1189,8 +1218,9 @@ function openFoodPicker(meal) {
 function srcHtml(f) {
   if (!per100(f)) return '';
   const v = per100(f), u = uOf(f);
+  const basis = f.each ? '1회 제공량당' : `100${u}당`;
   return `<div class="srcbox small">
-    <div><b>100${u}당</b> ${fmt(v.kcal)}kcal · 단백질 ${fmt(v.protein)}g · 탄수 ${fmt(v.carbs)}g · 지방 ${fmt(v.fat)}g</div>
+    <div><b>${basis}</b> ${fmtMac(v.kcal)}kcal · 단백질 ${fmtMac(v.protein)}g · 탄수 ${fmtMac(v.carbs)}g · 지방 ${fmtMac(v.fat)}g</div>
     ${f.state ? `<div>상태: ${esc(f.state)}</div>` : ''}
     <div class="muted">출처: ${f.src === '식약처 제품' ? esc(f.srcNote) : `${esc(SRC_LBL[f.src] || f.src || '')}${f.srcName ? ` — ${esc(f.srcName)}` : ''}${f.srcNote && f.src !== '직접 입력' ? `<br>${esc(f.srcNote)}` : ''}`}</div>
     ${f.est ? '<div class="warn">여러 재료가 섞인 음식이라 집·식당마다 차이가 커요(추정치).</div>' : ''}
@@ -1213,10 +1243,10 @@ function openAmountG(f, e, { meal, editIndex }) {
   openSheet(`<h2>${esc(f.name)}</h2>
     <div class="field"><label>분량 고르기</label><div class="chips wrap" id="ap">
       ${por.map((p, i) => `<button class="chip" data-p="${i}">${esc(porLbl(f, p))}</button>`).join('')}
-      <button class="chip" data-p="g100">100${u}</button></div></div>
+      ${f.each ? '' : `<button class="chip" data-p="g100">100${u}</button>`}</div></div>
     <div class="field" id="anf"><label>개수</label>
       <div class="stepper"><button class="btn" data-d="-0.5">−</button><input id="an" type="number" inputmode="decimal" step="0.5" min="0.25"><button class="btn" data-d="0.5">＋</button></div></div>
-    <div class="field"><label>또는 정확한 양 (${u})</label><div class="row"><input id="ag" class="num-in" type="number" inputmode="decimal" min="0" step="1" placeholder="예: 150"><span class="muted">${u}</span></div></div>
+    ${f.each ? '' : `<div class="field"><label>또는 정확한 양 (${u})</label><div class="row"><input id="ag" class="num-in" type="number" inputmode="decimal" min="0" step="1" placeholder="예: 150"><span class="muted">${u}</span></div></div>`}
     <div class="card" id="atot"></div>
     ${srcHtml(f)}
     <div class="field"><label>끼니</label><div class="chips" id="am">${MEALS.map(x => `<button class="chip ${x === m ? 'on' : ''}" data-m="${x}">${x}</button>`).join('')}</div></div>
@@ -1228,16 +1258,17 @@ function openAmountG(f, e, { meal, editIndex }) {
       body.querySelectorAll('#ap .chip').forEach(c => c.classList.toggle('on', a.p != null && String(c.dataset.p) === String(a.p)));
       $('#anf', body).style.display = a.p != null ? '' : 'none';
       if (a.p != null) $('#an', body).value = a.n;
-      if (fromInput !== 'g') $('#ag', body).value = g ? r1(g) : '';
+      const ag = $('#ag', body);
+      if (ag && fromInput !== 'g') ag.value = g ? r1(g) : '';
       $('#atot', body).innerHTML = `<div class="small muted" style="margin-bottom:6px">${g ? `총 <b id="agt">${fmt(g)}${u}</b>${a.p != null ? ` = ${esc(porLbl(f, por[a.p]))} × ${fmt(a.n)}` : ''}` : '양을 골라 주세요'}</div>
-        <div class="macro-grid four"><div><span class="muted small">칼로리</span><b id="akc">${fmt(mm.kcal)}</b></div><div><span class="muted small">단백질</span><b id="apr">${fmt(mm.protein)}g</b></div><div><span class="muted small">탄수</span><b>${fmt(mm.carbs)}g</b></div><div><span class="muted small">지방</span><b>${fmt(mm.fat)}g</b></div></div>`;
+        <div class="macro-grid four"><div><span class="muted small">칼로리</span><b id="akc">${fmtMac(mm.kcal)}</b></div><div><span class="muted small">단백질</span><b id="apr">${fmtMac(mm.protein)}g</b></div><div><span class="muted small">탄수</span><b>${fmtMac(mm.carbs)}g</b></div><div><span class="muted small">지방</span><b>${fmtMac(mm.fat)}g</b></div></div>`;
       $('#afav', body).textContent = db.favFoods.includes(f.id) ? '⭐ 즐겨찾기 해제' : '☆ 즐겨찾기에 추가';
     };
     draw();
     $('#ap', body).onclick = ev => { const c = ev.target.closest('[data-p]'); if (!c) return; if (c.dataset.p === 'g100') a = { g: 100 }; else a = { p: +c.dataset.p, n: a.p === +c.dataset.p ? a.n : 1 }; draw(); };
     body.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { a.n = Math.max(0.25, Math.round((a.n + +b.dataset.d) * 4) / 4); draw(); });
     $('#an', body).addEventListener('input', ev => { const v = Number(ev.target.value); if (v > 0) { a.n = v; draw('n'); $('#an', body).value = ev.target.value; } });
-    $('#ag', body).addEventListener('input', ev => { const v = Number(ev.target.value); if (v > 0) { a = { g: v }; draw('g'); } });
+    const agIn = $('#ag', body); if (agIn) agIn.addEventListener('input', ev => { const v = Number(ev.target.value); if (v > 0) { a = { g: v }; draw('g'); } });
     $('#am', body).onclick = ev => { const c = ev.target.closest('[data-m]'); if (c) { m = c.dataset.m; body.querySelectorAll('#am .chip').forEach(x => x.classList.toggle('on', x.dataset.m === m)); } };
     $('#afav', body).onclick = () => { const i = db.favFoods.indexOf(f.id); if (i >= 0) db.favFoods.splice(i, 1); else db.favFoods.push(f.id); save(); draw(); };
     const c = $('#acancel', body); if (c) c.onclick = closeSheet;
