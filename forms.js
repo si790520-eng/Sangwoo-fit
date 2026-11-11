@@ -1,5 +1,6 @@
 /* 핏로그 · 운동 자세 그림 (오프라인 인라인 SVG)
    - 동작 패턴별로 시작/끝 자세를 관절 각도로 정의하고, 같은 엔진으로 그려요.
+   - 애니메이션은 관절 각을 보간한 뒤 손·발 접점에 2-bone IK를 써서 뼈 길이를 유지해요.
    - 옆모습(side)과 앞/뒤모습(front/back, 3D 각도를 평면에 투영) 두 가지 시점.
    - 외부 이미지 없이 189개 운동 전부를 덮어요. */
 (function () {
@@ -20,13 +21,19 @@ const lerp = (a, b, t) => a + (b - a) * t;
 
 // ───────── 2관절 IK (허리→발목, 어깨→손)
 function ik(v, l1, l2, pick) {
-  let d = len(v); const max = l1 + l2 - 0.6, min = Math.abs(l1 - l2) + 2;
+  let d = len(v); const max = l1 + l2 - 0.6;
+  const min160 = Math.sqrt(Math.max(0.01, l1 * l1 + l2 * l2 + 2 * l1 * l2 * Math.cos(160 * R)));
+  const min = Math.max(Math.abs(l1 - l2) + 2, min160);
   if (d > max) d = max; if (d < min) d = min;
   const base = angOf(v), a1 = Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d)))) / R;
   const cands = [base + a1, base - a1].map(a => {
-    const j = dirD(a).map(x => x * l1), end = dirD(base).map(x => x * d);
-    return { a, j, b: angOf(sub(end, j)) };
+    const j = dirD(a).map(x => x * l1), end = dirD(base).map(x => x * d), bone2 = sub(end, j);
+    return { a, j, b: angOf(bone2), side: (j[0] * bone2[1] - j[1] * bone2[0]) >= 0 ? 1 : -1 };
   });
+  if (pick === 1 || pick === -1) {
+    const hit = cands[0].side === pick ? cands[0] : cands[1];
+    return [hit.a, hit.b];
+  }
   const score = { fwd: c => c.j[0], back: c => -c.j[0], down: c => c.j[1], up: c => -c.j[1] }[pick || 'fwd'];
   return score(cands[0]) >= score(cands[1]) ? [cands[0].a, cands[0].b] : [cands[1].a, cands[1].b];
 }
@@ -301,12 +308,28 @@ function eqSide(it, J) {
     case 'wheel': { const p = jp(J, it.j || 'handN', it.off); return circ(p, it.r || 9, C.eqDark, ` stroke="${C.eqHi}" stroke-width="2.5"`) + circ(p, 2.5, C.eqHi); }
     case 'circle': return circ(it.c, it.r, it.fill || 'none', ` stroke="${it.s || C.eq}" stroke-width="${it.w || 3}"`);
     case 'pathd': return `<path d="${it.d}" fill="${it.fill || 'none'}" stroke="${it.s || C.eq}" stroke-width="${it.w || 3}" stroke-linecap="round"/>`;
+    case 'seat': {
+      const h = it.hip || [160, 156], w = it.w || 54, th = it.th || 11;
+      return `<rect x="${f1(h[0] - w * 0.48)}" y="${f1(h[1] + 6)}" width="${w}" height="${th}" rx="3" fill="#6b778c"/>`
+        + ln([[h[0], h[1] + 16], [h[0], GY]], 6, C.eqDark)
+        + `<rect x="${f1(h[0] - 7)}" y="${GY - 5}" width="14" height="5" rx="1.5" fill="#2a303c"/>`;
+    }
+    case 'isoarm': {
+      const q = jp(J, it.j || 'handN', it.off), piv = it.piv, horn = it.horn == null ? 38 : it.horn;
+      const v = nrm(sub(q, piv)), far = add(piv, v, -horn);
+      return ln([far, q], it.w || 6, it.c || C.eq) + circ(piv, 5, C.eqDark) + circ(q, 4.5, C.eqHi)
+        + (horn > 4 ? circ(far, it.pr || 12, C.eqDark, ` stroke="${C.eqHi}" stroke-width="2"`) + circ(far, (it.pr || 12) * 0.62, '#4a5466') + circ(far, 3, C.eqHi) : '');
+    }
+    case 'footplate': {
+      const c = it.p, na = it.na == null ? 90 : it.na, d = dirD(na + 90), half = (it.l || 40) / 2;
+      return ln([add(c, d, -half), add(c, d, half)], it.th || 11, it.c || '#8a94a7');
+    }
     default: return '';
   }
 }
 function eqFront(it, J) {
   switch (it.t) {
-    case 'line': case 'rect': case 'stack': case 'bench': return eqSide(it, J);
+    case 'line': case 'rect': case 'stack': case 'bench': case 'seat': case 'isoarm': case 'footplate': return eqSide(it, J);
     case 'fbar': { const a = J.handL, b = J.handR, d = nrm(sub(b, a)), x = it.ext ?? 26; const A = add(a, d, -x), B = add(b, d, x);
       return ln([A, B], 4, C.eqHi) + (it.plates === false ? '' : [A, B].map((p, i) => `<rect x="${f1(p[0] - 4 + (i ? -4 : 4))}" y="${f1(p[1] - 15)}" width="8" height="30" rx="2" fill="${C.eqDark}" stroke="${C.eqHi}" stroke-width="1.5"/>`).join('')); }
     case 'fdb': return ['L', 'R'].map(s => { const p = J['hand' + s], v = it.vert ? [0, 1] : [1, 0]; return ln([add(p, v, -9), add(p, v, 9)], 3.5, C.eqHi) + [-1, 1].map(k => { const q = add(p, v, 9 * k); return `<rect x="${f1(q[0] - (it.vert ? 6 : 3))}" y="${f1(q[1] - (it.vert ? 3 : 6))}" width="${it.vert ? 12 : 6}" height="${it.vert ? 6 : 12}" rx="2" fill="${C.eqDark}" stroke="${C.eqHi}" stroke-width="1.3"/>`; }).join(''); }).join('');
@@ -322,16 +345,178 @@ function eqFront(it, J) {
     default: return '';
   }
 }
-// 자세 보간
+// 자세 보간 — 점(hk/lk)이 아니라 관절 각을 보간하고, 손·발 접점은 2-bone IK로 유지해요.
+const angOf = E.angOf;
+const lerpNum = (a, b, t) => a + (b - a) * t;
+const lerpPt = (a, b, t) => [lerpNum(a[0], b[0], t), lerpNum(a[1], b[1], t)];
 function lerpPose(a, b, t) {
   if (typeof a === 'number' && typeof b === 'number') return a + (b - a) * t;
   if (Array.isArray(a) && Array.isArray(b)) return a.map((x, i) => (typeof x === 'string' ? x : lerpPose(x, b[i] ?? x, t)));
   if (a && typeof a === 'object' && b && typeof b === 'object') { const o = {}; for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) o[k] = k in a && k in b ? lerpPose(a[k], b[k], t) : (k in a ? a[k] : b[k]); return o; }
   return a ?? b;
 }
+function lerpAng(a, b, t) {
+  if (a == null) return b;
+  if (b == null) return a;
+  let d = b - a;
+  while (d > 180) d -= 360;
+  while (d < -180) d += 360;
+  return a + d * t;
+}
+function lerpAngTree(a, b, t) {
+  if (typeof a === 'number' && typeof b === 'number') return lerpAng(a, b, t);
+  if (Array.isArray(a) && Array.isArray(b)) return a.map((x, i) => lerpAngTree(x, b[i] ?? x, t));
+  return a;
+}
+const MACH_H = new Set(['lever', 'isoarm', 'cable', 'flever', 'fcable', 'fcable1', 'midcable']);
+const HELD_H = new Set(['bar', 'db', 'kb', 'fbar', 'fdb', 'grip', 'wheel']);
+function isHandEq(i) {
+  if (i.t === 'flever' || i.t === 'fcable' || i.t === 'fcable1' || i.t === 'midcable' || i.t === 'fbar' || i.t === 'fdb' || i.t === 'grip') return true;
+  if (!i.j) return true;
+  return /^hand/.test(String(i.j));
+}
+function handMode(pat) {
+  const eq = pat.eq || [];
+  if (eq.some(i => MACH_H.has(i.t) && isHandEq(i))) return 'machine';
+  if ((pat.path || []).some(j => /^hand/.test(j)) && eq.some(i => HELD_H.has(i.t) && isHandEq(i))) return 'held';
+  return 'free';
+}
+function feetMode(pat) {
+  if (pat.noGround) return null;
+  const at0 = pat.s && pat.s.at && pat.s.at[0];
+  if (at0 && /^hand/.test(at0)) return null;
+  if ((pat.path || []).some(j => /ankle|toe/.test(j))) return 'move';
+  if ((pat.eq || []).some(i => i.t === 'fplate' || i.t === 'footplate')) return 'move';
+  if (at0 && /^ankle/.test(at0)) return null;
+  return 'plant';
+}
+function leverPiv(pat) {
+  const it = (pat.eq || []).find(i => (i.t === 'lever' || i.t === 'isoarm') && i.piv && typeof i.piv[0] === 'number' && isHandEq(i));
+  return it ? it.piv : null;
+}
+function explicitSide(pose) {
+  const J = sideJ(pose);
+  const p = Object.assign({}, pose);
+  p.th = [angOf(sub(J.kneeN, J.hip)), angOf(sub(J.kneeF, J.hip))];
+  p.sh = [angOf(sub(J.ankleN, J.kneeN)), angOf(sub(J.ankleF, J.kneeF))];
+  p.ua = [angOf(sub(J.elbowN, J.shoulder)), angOf(sub(J.elbowF, J.shoulder))];
+  p.fa = [angOf(sub(J.wristN, J.elbowN)), angOf(sub(J.wristF, J.elbowF))];
+  p.ft = [angOf(sub(J.toeN, J.ankleN)), angOf(sub(J.toeF, J.ankleF))];
+  p.wr = [angOf(sub(J.handN, J.wristN)) - p.fa[0], angOf(sub(J.handF, J.wristF)) - p.fa[1]];
+  p.tr = pose.tr == null ? 0 : pose.tr;
+  p.hd = pose.hd == null ? 0 : pose.hd;
+  delete p.hk; delete p.hkF; delete p.lk; delete p.lkF; delete p.rel;
+  const eN = (function(a,j,b){ const u=nrm(sub(j,a)), v=nrm(sub(b,j)); return (u[0]*v[1]-u[1]*v[0])>=0?1:-1; })(J.shoulder, J.elbowN, J.wristN);
+  const eF = (function(a,j,b){ const u=nrm(sub(j,a)), v=nrm(sub(b,j)); return (u[0]*v[1]-u[1]*v[0])>=0?1:-1; })(J.shoulder, J.elbowF, J.wristF);
+  const kN = (function(a,j,b){ const u=nrm(sub(j,a)), v=nrm(sub(b,j)); return (u[0]*v[1]-u[1]*v[0])>=0?1:-1; })(J.hip, J.kneeN, J.ankleN);
+  const kF = (function(a,j,b){ const u=nrm(sub(j,a)), v=nrm(sub(b,j)); return (u[0]*v[1]-u[1]*v[0])>=0?1:-1; })(J.hip, J.kneeF, J.ankleF);
+  p._c = {
+    handN: J.handN.slice(), handF: J.handF.slice(),
+    ankleN: J.ankleN.slice(), ankleF: J.ankleF.slice(),
+    eSideN: eN, eSideF: eF, kSideN: kN, kSideF: kF,
+    eb: eN, ebF: eF, kb: kN, kbF: kF
+  };
+  return p;
+}
+function explicitFront(pose) {
+  const J = frontJ(pose);
+  const p = Object.assign({}, pose);
+  p._c = {
+    handL: J.handL.slice(), handR: J.handR.slice(),
+    ankleL: J.ankleL.slice(), ankleR: J.ankleR.slice(),
+    eb: 'down', ebF: 'down', kb: 'fwd', kbF: 'fwd'
+  };
+  return p;
+}
+const SKIP_KEYS = { _c: 1, hk: 1, hkF: 1, lk: 1, lkF: 1, rel: 1, eb: 1, kb: 1, ebF: 1, kbF: 1, noGround: 1 };
+function lerpAnglePose(s, e, t) {
+  const o = {};
+  new Set([...Object.keys(s), ...Object.keys(e)]).forEach(k => {
+    if (SKIP_KEYS[k]) return;
+    const av = s[k], bv = e[k];
+    if (k === 'at') {
+      const a = av || bv, b = bv || av;
+      o.at = [a[0], Array.isArray(a[1]) ? lerpPt(a[1], b[1], t) : a[1]];
+      return;
+    }
+    if (typeof av === 'number' || typeof bv === 'number') { o[k] = lerpAng(av == null ? bv : av, bv == null ? av : bv, t); return; }
+    if (Array.isArray(av) || Array.isArray(bv)) { o[k] = lerpAngTree(av == null ? bv : av, bv == null ? av : bv, t); return; }
+    o[k] = av == null ? bv : av;
+  });
+  if (s.noGround || e.noGround) o.noGround = s.noGround || e.noGround;
+  o.eb = s._c.eb; o.ebF = s._c.ebF; o.kb = s._c.kb; o.kbF = s._c.kbF;
+  return o;
+}
+function arcPt(piv, a, b, t) {
+  const angA = Math.atan2(a[1] - piv[1], a[0] - piv[0]);
+  const angB = Math.atan2(b[1] - piv[1], b[0] - piv[0]);
+  let d = angB - angA;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  const rA = Math.hypot(a[0] - piv[0], a[1] - piv[1]);
+  const rB = Math.hypot(b[0] - piv[0], b[1] - piv[1]);
+  const r = rA + (rB - rA) * t, an = angA + d * t;
+  return [piv[0] + Math.cos(an) * r, piv[1] + Math.sin(an) * r];
+}
+function applySideContacts(pat, p, t, s, e) {
+  const hm = handMode(pat);
+  if (hm !== 'free') {
+    const piv = leverPiv(pat);
+    const hN = piv ? arcPt(piv, s._c.handN, e._c.handN, t) : lerpPt(s._c.handN, e._c.handN, t);
+    const hF = piv ? arcPt(piv, s._c.handF, e._c.handF, t) : lerpPt(s._c.handF, e._c.handF, t);
+    const J0 = sideJ(p);
+    p.hk = sub(hN, J0.shoulder);
+    p.hkF = sub(hF, J0.shoulder);
+    p.eb = s._c.eb; p.ebF = s._c.ebF;
+  }
+  const fm = feetMode(pat);
+  if (fm) {
+    const aN = fm === 'move' ? lerpPt(s._c.ankleN, e._c.ankleN, t) : s._c.ankleN;
+    const aF = fm === 'move' ? lerpPt(s._c.ankleF, e._c.ankleF, t) : s._c.ankleF;
+    const J1 = sideJ(p);
+    p.lk = sub(aN, J1.hip);
+    p.lkF = sub(aF, J1.hip);
+    p.kb = s._c.kb; p.kbF = s._c.kbF;
+  }
+  return p;
+}
+function d3full(el, hd, sg) {
+  const er = el * Math.PI / 180, hr = hd * Math.PI / 180;
+  return [sg * Math.sin(er) * Math.cos(hr), Math.cos(er), Math.sin(er) * Math.sin(hr)];
+}
+function ang3(u, v) {
+  const du = Math.hypot(u[0], u[1], u[2]) || 1, dv = Math.hypot(v[0], v[1], v[2]) || 1;
+  return Math.acos(Math.max(-1, Math.min(1, (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (du * dv)))) * 180 / Math.PI;
+}
+function clampPair(ua, fa) {
+  let f = fa.slice();
+  for (let i = 0; i < 8; i++) {
+    if (ang3(d3full(ua[0], ua[1], 1), d3full(f[0], f[1], 1)) <= 160) break;
+    f = [ua[0] + (f[0] - ua[0]) * 0.82, ua[1] + (f[1] - ua[1]) * 0.82];
+  }
+  return f;
+}
+function applyFrontLimits(p) {
+  if (p.ua && p.fa && Array.isArray(p.ua[0])) p.fa = [clampPair(p.ua[0], p.fa[0]), clampPair(p.ua[1], p.fa[1])];
+  if (p.th && p.sh && Array.isArray(p.th[0])) p.sh = [clampPair(p.th[0], p.sh[0]), clampPair(p.th[1], p.sh[1])];
+  return p;
+}
+function resolved(pat) {
+  if (!pat._rs) {
+    if (pat.view === 'side') { pat._rs = explicitSide(pat.s); pat._re = explicitSide(pat.e); }
+    else { pat._rs = explicitFront(pat.s); pat._re = explicitFront(pat.e); }
+  }
+  return pat;
+}
+function animatePose(pat, t) {
+  resolved(pat);
+  const p = lerpAnglePose(pat._rs, pat._re, t);
+  if (pat.view === 'side') return applySideContacts(pat, p, t, pat._rs, pat._re);
+  return applyFrontLimits(p);
+}
 const jointsOf = (pat, pose) => (pat.view === 'side' ? sideJ(pose) : frontJ(pose));
 function scene(pat, t, opt = {}) {
-  const pose = opt.pose || lerpPose(pat.s, pat.e, t);
+  const pose = opt.pose || animatePose(pat, t);
   const J = jointsOf(pat, pose);
   const draw = pat.view === 'side' ? eqSide : eqFront;
   const back = (pat.eq || []).filter(i => !i.front).map(i => draw(i, J)).join('');
@@ -343,10 +528,10 @@ function scene(pat, t, opt = {}) {
 // 움직임 경로 화살표 (양방향)
 function pathArrow(pat) {
   return (pat.path || []).map(j => {
-    const pts = []; for (let i = 0; i <= 16; i++) { const J = jointsOf(pat, lerpPose(pat.s, pat.e, i / 16)); pts.push(J[j]); }
+    const pts = []; for (let i = 0; i <= 16; i++) { const J = jointsOf(pat, animatePose(pat, i / 16)); pts.push(J[j]); }
     let L = 0; for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
     if (L < 12) return '';
-    const off = pat.pathOff || [0, 0], q = pts.map(p => add(p, off));
+    const off = pat.pathOff || [0, 0], q = pts.map(pp => add(pp, off));
     return `<polyline points="${q.map(P).join(' ')}" fill="none" stroke="${C.path}" stroke-width="2.4" stroke-dasharray="5 4" stroke-linecap="round" marker-start="url(#fa-s)" marker-end="url(#fa-e)" opacity=".95"/>`;
   }).join('');
 }
@@ -358,7 +543,7 @@ function marks(pat, J) {
   }).join('');
 }
 const ground = pat => pat.noGround ? '' : `<line x1="8" y1="${GY}" x2="312" y2="${GY}" stroke="${C.ground}" stroke-width="2"/>`;
-window.FORM_SCENE = { scene, pathArrow, marks, DEFS, ground, lerpPose, jointsOf };
+window.FORM_SCENE = { scene, pathArrow, marks, DEFS, ground, lerpPose, animatePose, jointsOf };
 })();
 
 /* ───────── 동작 패턴 (시작/끝 자세 + 기구 + 핵심 포인트) ───────── */
@@ -405,6 +590,9 @@ PT.squat = (o = {}) => {
     cues: [['발은 어깨너비, 발끝은 살짝 바깥(15~30°)', 'toeN', [18, -14]], ['무릎은 발끝 방향으로 — 안으로 모이지 않게', 'kneeN', [18, -10]], ['허리는 곧게, 엉덩이를 뒤·아래로 보내며 앉기', 'hip', [-24, -10]], ['발 전체(특히 뒤꿈치)로 바닥을 밀며 일어나기']], breath: BR.leg });
 };
 PT.hack = (o = {}) => {
+  // gym80 Pure Kraft Hack Squat 4159N https://gym80.de/en/product/4159n/
+  // Panatta Super Hack Squat https://www.panattasport.com/en/free-weight-special/super-hack-squat/
+  // ~45° back pad on parallel rails, thick shoulder pads, large 3-way footplate. Sled slides; feet stay on the plate.
   const k = o.k || 'hack';
   const tr = k === 'v' ? -26 : k === 'reverse' ? 34 : -40;
   const ank = [205, 166];
@@ -416,11 +604,13 @@ PT.hack = (o = {}) => {
   const off = k === 'reverse' ? 14 : -14;
   const rail0 = add(add(hs, n, off * 1.6), u, 70), rail1 = add(add(he, n, off * 1.6), u, -40);
   const eq = [
-    { t: 'line', p: [rail0, rail1], w: 5, c: '#3a414f' },
-    { t: 'line', p: [add(ank, [-16, 9]), add(ank, [30, -3])], w: 7, c: '#7b8698' },
-    { t: 'line', p: [add(ank, [8, 5]), [ank[0] + 8, GY]], w: 6, c: '#3a414f' },
-    { t: 'torsopad', a: -6, b: 60, off, w: 11 },
-    { t: 'roller', j: 'shoulder', off: k === 'reverse' ? [6, -6] : [-2, -8], r: 6.5, front: true },
+    { t: 'line', p: [rail0, rail1], w: 6, c: '#3a414f' },
+    { t: 'line', p: [add(rail0, n, off > 0 ? 11 : -11), add(rail1, n, off > 0 ? 11 : -11)], w: 4, c: '#2a303c' },
+    { t: 'line', p: [add(ank, [-22, 14]), add(ank, [38, -8])], w: 13, c: '#8a94a7' },
+    { t: 'line', p: [add(ank, [12, 8]), [ank[0] + 12, GY]], w: 7, c: '#3a414f' },
+    { t: 'torsopad', a: -6, b: 60, off, w: 13 },
+    { t: 'roller', j: 'shoulder', off: k === 'reverse' ? [6, -8] : [-2, -10], r: 8, front: true },
+    { t: 'roller', j: 'shoulder', off: k === 'reverse' ? [8, 4] : [2, 2], r: 6.5, front: true },
   ];
   const cues = k === 'reverse'
     ? [['가슴을 패드에, 발은 발판 위쪽', 'shoulder', [22, -14]], ['엉덩이를 뒤로 빼며 깊게 앉기', 'hip', [-26, 6]], ['무릎은 발끝 방향', 'kneeN', [16, -12]], ['엉덩이를 앞으로 밀며 일어나기']]
@@ -428,6 +618,8 @@ PT.hack = (o = {}) => {
   return S({ s, e, eq, path: ['hip'], pathOff: k === 'reverse' ? [0, 0] : [-14, 10], lab: ['시작 (선 자세)', '앉은 자세'], cues, breath: BR.leg });
 };
 PT.legpress = (o = {}) => {
+  // Panatta Super Leg Press 45° Dual System https://www.panattasport.com/en/free-weight-special/super-leg-press-45-dual-system/
+  // Wide non-slip footplate on linear rails; adjustable back pad; hands on side handles. Horizontal = seated upright, vertical plate.
   const k = o.k || '45';
   const hip = k === 'horiz' ? [100, 150] : [92, 158];
   const tr = k === 'horiz' ? -22 : -56;
@@ -439,11 +631,13 @@ PT.legpress = (o = {}) => {
   if (k === 'calf') e = { ...s, lk: sub(add(s0, rd, 8), hip), ft: [ftS + 45, ftS + 45] };
   if (k === 'single') { s.lkF = [16, 40]; s.kbF = 'fwd'; e.lkF = [16, 40]; e.kbF = 'fwd'; }
   const sH = handTo(s, add(hip, [12, 4]), 'down'), eH = handTo(e, add(hip, [12, 4]), 'down');
+  const railA = add(add(hip, rd, 24), [12, 20]), railB = add(add(hip, rd, 155), [12, 20]);
   const eq = [
-    { t: 'line', p: [add(add(hip, rd, 30), [10, 18]), add(add(hip, rd, 150), [10, 18])], w: 5, c: '#3a414f' },
-    { t: 'fplate', j: 'ankleN', na: k === 'horiz' ? 90 : 135, off: 8, l: 46, front: true },
-    { t: 'torsopad', a: -8, b: 62, off: -14, w: 11 },
-    { t: 'line', p: [add(hip, [-14, 12]), add(hip, [26, 12])], w: 10 },
+    { t: 'line', p: [railA, railB], w: 6, c: '#3a414f' },
+    { t: 'line', p: [add(railA, [0, 10]), add(railB, [0, 10])], w: 4, c: '#2a303c' },
+    { t: 'fplate', j: 'ankleN', na: k === 'horiz' ? 90 : 135, off: 9, l: 52, front: true },
+    { t: 'torsopad', a: -8, b: 62, off: -14, w: 13 },
+    { t: 'line', p: [add(hip, [-16, 12]), add(hip, [28, 12])], w: 11 },
     { t: 'line', p: [add(hip, [4, 16]), [hip[0] + 4, GY]], w: 6, c: '#3a414f' },
   ];
   return S({ s: sH, e: eH, eq, path: ['ankleN'], pathOff: [18, 14], lab: k === 'calf' ? ['발뒤꿈치 내림', '발끝으로 밀기'] : ['다리 편 자세', '내린 자세'],
@@ -475,17 +669,21 @@ PT.lunge = (o = {}) => {
     cues: [['앞발 전체로 바닥을 누르기, 무릎은 발끝 방향', 'kneeN', [18, -10]], ['몸통은 세우고 골반은 정면', 'shoulder', [22, -8]], [k === 'step' ? '뒷발로 차지 말고 앞다리 힘으로 오르기' : '뒷무릎은 바닥 가까이 수직으로 내리기', 'kneeF', [-20, -6]], ['앞발 뒤꿈치로 밀며 올라오기']], breath: BR.leg });
 };
 PT.legext = () => {
+  // gym80 Pure Kraft Leg Extension 4336N https://gym80.de/en/product/4336n/
+  // Seated, adjustable back pad + shin roller on a cam at the knee; grab handles beside the hips.
   const hip = [120, 136];
   const s = { tr: -12, at: ['hip', hip], th: [86, 86], sh: [-6, -6], ft: [84, 84], hk: [16, 52] };
   const e = { ...s, sh: [82, 82], ft: [168, 168] };
-  return S({ s, e, eq: [{ t: 'torsopad', a: -4, b: 58, off: -14, w: 11 }, { t: 'line', p: [[96, 148], [160, 148]], w: 10 }, { t: 'line', p: [[124, 154], [124, GY]], w: 6, c: '#3a414f' },
-    { t: 'limbpad', a: 'kneeN', b: 'ankleN', at: 0.88, side: 1, d: 9, r: 7, front: true }],
+  return S({ s, e, eq: [{ t: 'torsopad', a: -4, b: 58, off: -14, w: 11 }, { t: 'seat', hip },
+    { t: 'lever', piv: [168, 140], j: 'ankleN', w: 5, front: true },
+    { t: 'limbpad', a: 'kneeN', b: 'ankleN', at: 0.88, side: 1, d: 9, r: 7.5, front: true }],
     path: ['ankleN'], pathOff: [10, 0], lab: ['굽힌 자세', '편 자세'],
     cues: [['무릎 관절을 머신 회전축에 맞추기', 'kneeN', [4, -20]], ['패드는 발목 바로 위 정강이에', 'ankleN', [16, 8]], ['허벅지 앞 힘으로 끝까지 펴고 1초 멈춤'], ['내릴 때 천천히 (2~3초)']], breath: BR.iso });
 };
 PT.legcurl = (o = {}) => {
   const k = o.k || 'seated';
   if (k === 'lying') {
+    // Lying leg curl: prone on a bench, ankle roller above the Achilles, pivot at the bench edge / knee.
     const s = { tr: 92, at: ['hip', [160, 142]], th: [-92, -92], sh: [-92, -92], ft: [-20, -20], hk: [14, 26], hd: -18 };
     const e = { ...s, sh: [-205, -205], ft: [-120, -120] };
     return S({ s, e, eq: [{ t: 'bench', a: [80, 156], b: [240, 156], legs: [[100, 156], [220, 156]] }, { t: 'limbpad', a: 'kneeN', b: 'ankleN', at: 0.9, side: -1, d: 9, front: true }],
@@ -498,9 +696,12 @@ PT.legcurl = (o = {}) => {
     return S({ s, e, eq: [{ t: 'line', p: [[225, GY], [225, 70], [205, 70]], w: 6, c: '#3a414f' }, { t: 'limbpad', a: 'kneeN', b: 'ankleN', at: 0.9, side: -1, d: 9, front: true }], path: ['ankleN'], lab: ['편 자세', '굽힌 자세'],
       cues: [['무릎을 패드에 대고 골반은 고정', 'kneeN', [18, -6]], ['발뒤꿈치를 엉덩이 쪽으로', 'ankleN', [-20, 6]], ['상체가 따라 숙여지지 않게']], breath: BR.iso });
   }
+  // gym80 Seated Leg Curl 3003 https://gym80.de/en/product/3003/
+  // Adjustable back pad, thigh hold-down, ankle roller behind the Achilles, cam at the knee.
   const s = { tr: -14, at: ['hip', [116, 136]], th: [86, 86], sh: [82, 82], ft: [168, 168], hk: [18, 50] };
   const e = { ...s, sh: [-16, -16], ft: [80, 80] };
-  return S({ s, e, eq: [{ t: 'torsopad', a: -4, b: 58, off: -14, w: 11 }, { t: 'line', p: [[92, 148], [156, 148]], w: 10 }, { t: 'line', p: [[120, 154], [120, GY]], w: 6, c: '#3a414f' },
+  return S({ s, e, eq: [{ t: 'torsopad', a: -4, b: 58, off: -14, w: 11 }, { t: 'seat', hip: [116, 136] },
+    { t: 'lever', piv: [166, 140], j: 'ankleN', w: 5, front: true },
     { t: 'limbpad', a: 'hip', b: 'kneeN', at: 0.72, side: 1, d: 11, r: 6.5, front: true }, { t: 'limbpad', a: 'kneeN', b: 'ankleN', at: 0.9, side: -1, d: 9, front: true }],
     path: ['ankleN'], pathOff: [0, 8], lab: ['편 자세', '굽힌 자세'],
     cues: [['무릎을 회전축에, 허벅지 패드로 고정', 'kneeN', [4, -24]], ['패드는 아킬레스건 바로 위', 'ankleN', [14, 12]], ['발뒤꿈치를 아래·뒤로 끝까지 당기기'], ['돌아갈 때 천천히']], breath: BR.iso });
@@ -510,7 +711,7 @@ PT.calf = (o = {}) => {
   if (k === 'seated') {
     const s = { tr: 2, at: ['toeN', [196, 176]], th: [88, 88], sh: [0, 0], ft: [112, 112], hk: [24, 40] };
     const e = { ...s, ft: [54, 54] };
-    return S({ s, e, eq: [{ t: 'rect', x: 182, y: 178, w: 40, h: 22 }, { t: 'line', p: [[100, 150], [160, 150]], w: 10 }, { t: 'limbpad', a: 'hip', b: 'kneeN', at: 0.92, side: 1, d: 11, r: 7, front: true }],
+    return S({ s, e, eq: [{ t: 'rect', x: 182, y: 178, w: 42, h: 22, c: '#8a94a7' }, { t: 'seat', hip: [118, 142] }, { t: 'limbpad', a: 'hip', b: 'kneeN', at: 0.92, side: 1, d: 11, r: 7.5, front: true }],
       path: ['kneeN'], pathOff: [0, -14], lab: ['내린 자세', '올린 자세'], cues: [['패드는 무릎 바로 위 허벅지에', 'kneeN', [14, -20]], ['발 앞쪽만 발판에, 발뒤꿈치 끝까지 내리기', 'toeN', [18, -8]], ['끝까지 올려 1초 멈춤']], breath: BR.iso });
   }
   const arms = k === 'machine' ? { ua: [150, 150], fa: [200, 200] } : k === 'smith' ? { rel: true, ua: [-48, -48], fa: [150, 150] } : { ua: [0, 0], fa: [0, 0] };
@@ -522,13 +723,15 @@ PT.calf = (o = {}) => {
   return S({ s, e, eq, path: ['head'], pathOff: [20, 0], lab: ['내린 자세', '올린 자세'], cues: [['발 앞쪽(볼)만 발판 끝에', 'toeN', [18, -10]], ['무릎은 곧게(살짝만 굽힘) 고정', 'kneeN', [18, -8]], ['발뒤꿈치를 끝까지 내렸다가 끝까지 올려 1초 멈춤']], breath: BR.iso });
 };
 PT.abd = (o = {}) => {
+  // gym80 Pure Kraft Abduction 3D 4384 https://gym80.de/en/product/4384/
+  // Seated, angle-adjustable backrest, knee pads that sweep out (abduction) or in (adduction); handles beside the seat.
   const out = o.k !== 'add';
   const sTh = out ? 76 : 34, eTh = out ? 38 : 78;
   const base = { at: ['hip', [160, 150]], ua: [[24, 10], [24, 10]], fa: [[14, 40], [14, 40]], sh: [[0, 0], [0, 0]] };
   const s = { ...base, th: [[90, sTh], [90, sTh]] }, e = { ...base, th: [[90, eTh], [90, eTh]] };
   const offs = out ? { kneeL: [-9, 2], kneeR: [9, 2] } : { kneeL: [9, 2], kneeR: [-9, 2] };
-  return Fv({ s, e, eq: [{ t: 'rect', x: 136, y: 84, w: 48, h: 72, c: '#3a414f' }, { t: 'rect', x: 128, y: 152, w: 64, h: 10 }, { t: 'line', p: [[160, 162], [160, GY]], w: 6, c: '#3a414f' },
-    { t: 'fpad', j: ['kneeL', 'kneeR'], offs, w: 9, h: 30, front: true }, { t: 'line', p: [[96, 196], [224, 196]], w: 5, c: '#7b8698' }],
+  return Fv({ s, e, eq: [{ t: 'rect', x: 136, y: 78, w: 48, h: 78, c: '#3a414f' }, { t: 'rect', x: 124, y: 150, w: 72, h: 12 }, { t: 'line', p: [[160, 162], [160, GY]], w: 6, c: '#3a414f' },
+    { t: 'fpad', j: ['kneeL', 'kneeR'], offs, w: 11, h: 32, front: true }, { t: 'line', p: [[88, 196], [232, 196]], w: 6, c: '#8a94a7' }],
     path: ['kneeL', 'kneeR'], pathOff: [0, -20], lab: out ? ['모은 자세', '벌린 자세'] : ['벌린 자세', '모은 자세'],
     cues: out ? [['무릎 바깥쪽을 패드에', 'kneeR', [22, -18]], ['등은 등받이에, 허리 곧게 (살짝 앞으로 숙이면 엉덩이에 더)', 'chest', [26, -20]], ['엉덩이 옆 힘으로 끝까지 벌리고 1초 멈춤'], ['모을 때 패드가 쾅 닫히지 않게 천천히']]
       : [['무릎 안쪽을 패드에', 'kneeR', [22, -18]], ['편하게 벌어지는 범위로 시작 각도 맞추기', 'kneeL', [-24, -18]], ['허벅지 안쪽 힘으로 모으고 1초 멈춤'], ['벌릴 때 천천히 늘리기']], breath: BR.iso });
@@ -641,16 +844,25 @@ PT.bench = (o = {}) => {
     cues: [['어깨뼈를 모아 아래로, 가슴을 살짝 들기', 'shoulder', [-18, 20]], ['발은 바닥에 단단히', 'toeN', [16, -12]], [load === 'db' ? '덤벨은 가슴 옆까지, 팔꿈치 45~70°' : '바는 가슴 중앙~아래로, 팔꿈치 45~70°', 'elbowN', [18, 14]], ['손목은 곧게 세우고 엉덩이는 벤치에']], breath: BR.push });
 };
 PT.chestpress = (o = {}) => {
+  // gym80 Pure Kraft Seated Chest Press Dual 4328 https://gym80.de/en/product/4328/
+  // Panatta Super Vertical Chest Press https://www.panattasport.com/en/free-weight-special/super-vertical-chest-press/
+  // Upright seat + back pad, independent lever arms pivoting beside/behind the shoulders, plate horns on the arms.
+  // Flat: handles at mid-chest pressing forward+slightly up. Incline: higher path (upper chest). Decline: lower path.
   const k = o.k || 'flat';
-  const hip = [116, 152];
-  const s = footTo({ tr: k === 'incline' ? -24 : -12, at: ['hip', hip], ft: [90, 90] }, [158, A], 'fwd');
-  const S0 = { ...s, hk: [16, 12], eb: 'back' };
-  const end = { flat: [58, 4], incline: [44, -34], decline: [52, 26] }[k];
-  const E0 = { ...S0, hk: end, eb: 'down' };
-  const J = sideJ(E0);
-  const piv = add(J.handN, k === 'decline' ? [40, -70] : [46, -60]);
-  const eq = [{ t: 'torsopad', a: -6, b: 62, off: -14, w: 11 }, { t: 'line', p: [add(hip, [-24, 12]), add(hip, [22, 12])], w: 10 }, { t: 'line', p: [add(hip, [-6, 16]), [hip[0] - 6, GY]], w: 6, c: '#3a414f' },
-    { t: 'stack', x: 262, y: 70, w: 30, h: 128 }, { t: 'line', p: [piv, [277, piv[1]], [277, 70]], w: 6, c: '#3a414f' }, { t: 'lever', piv, j: 'handN', front: true }];
+  const hip = [122, 154];
+  const tr = k === 'incline' ? -26 : k === 'decline' ? -6 : -10;
+  const s = footTo({ tr, at: ['hip', hip], ft: [90, 90] }, [174, A], 'fwd');
+  const hS = { flat: [20, 12], incline: [18, 2], decline: [18, 22] }[k];
+  const hE = { flat: [56, -2], incline: [48, -30], decline: [54, 22] }[k];
+  const S0 = { ...s, hk: hS, eb: 'back' };
+  const E0 = { ...s, hk: hE, eb: 'back' };
+  const piv = k === 'incline' ? [90, 68] : k === 'decline' ? [92, 102] : [90, 84];
+  const eq = [
+    { t: 'line', p: [[78, 40], [78, GY]], w: 6, c: '#3a414f' },
+    { t: 'torsopad', a: -6, b: 62, off: -14, w: 13 },
+    { t: 'seat', hip },
+    { t: 'isoarm', piv, j: 'handN', front: true, horn: 34 },
+  ];
   return S({ s: S0, e: E0, eq, path: ['handN'], pathOff: [0, 16], lab: ['가슴 늘린 자세', '민 자세'],
     cues: [[k === 'incline' ? '손잡이가 가슴 위쪽(쇄골 아래) 높이' : k === 'decline' ? '손잡이가 가슴 아래쪽 높이' : '손잡이가 가슴 중간 높이가 되게 시트 조절', 'handN', [8, -22]], ['등·엉덩이를 등받이에, 어깨뼈 모으기', 'shoulder', [-26, -10]], ['팔꿈치를 잠그기 직전까지 밀기', 'elbowN', [6, 22]], ['돌아올 때 가슴이 늘어나는 지점까지 천천히']], breath: BR.push });
 };
@@ -667,9 +879,14 @@ PT.fly = (o = {}) => {
     const open = { ua: [[88, -8], [88, -8]], fa: [[84, 2], [84, 2]] }, close = { ua: [[88, 96], [88, 96]], fa: [[88, 112], [88, 112]] };
     const base = { at: ['hip', [160, 150]], th: [[90, 80], [90, 80]], sh: [[0, 0], [0, 0]] };
     const s = { ...base, ...(rear ? close : open) }, e = { ...base, ...(rear ? open : close) };
-    const eq = [{ t: 'rect', x: 156, y: 30, w: 8, h: 40, c: '#3a414f' }, { t: 'rect', x: 128, y: 152, w: 64, h: 10 }, { t: 'line', p: [[160, 162], [160, GY]], w: 6, c: '#3a414f' },
-      { t: 'flever', piv: [[132, 80], [188, 80]], front: true }, { t: 'grip', front: true }];
-    if (!rear) eq.unshift({ t: 'rect', x: 136, y: 80, w: 48, h: 74, c: '#3a414f' });
+    // gym80 Pure Kraft Butterfly Dual 4341 https://gym80.de/en/product/4341/
+    // Panatta Vertical Pek Dek https://www.panattasport.com/en/fantastic/fantastic-vertical-pek-dek/
+    // Pec deck: seated against a back pad, independent arms pivoting outboard at shoulder height, handles at mid-chest.
+    // Rear delt: same frame but the user faces a chest pad (drawn from behind).
+    const eq = [{ t: 'rect', x: 154, y: 22, w: 12, h: 50, c: '#3a414f' }, { t: 'rect', x: 124, y: 150, w: 72, h: 12 }, { t: 'line', p: [[160, 162], [160, GY]], w: 6, c: '#3a414f' },
+      { t: 'flever', piv: [[78, 88], [242, 88]], front: true }, { t: 'grip', front: true }];
+    if (!rear) eq.unshift({ t: 'rect', x: 134, y: 76, w: 52, h: 78, c: '#3a414f' });
+    else eq.unshift({ t: 'rect', x: 148, y: 86, w: 24, h: 64, c: '#4a5568' });
     return (rear ? Bv : Fv)({ s, e, eq, path: ['handL', 'handR'], pathOff: [0, -2], lab: rear ? ['모은 자세 (뒤에서 본 모습)', '벌린 자세'] : ['벌린 자세', '모은 자세'],
       cues: rear ? [['가슴을 패드에 붙이고 손잡이는 어깨 높이', 'shoulderL', [-26, -20]], ['팔꿈치는 살짝 굽혀 고정, 팔 전체로 크게 벌리기', 'elbowR', [22, -20]], ['어깨 으쓱 금지 — 뒤쪽 어깨로 밀기', 'shoulderR', [26, -26]], ['돌아올 때 천천히, 무게가 쉬지 않게']]
         : [['손잡이(팔)가 가슴 중간 높이가 되게 시트 조절', 'handR', [6, 24]], ['팔꿈치는 살짝 굽힌 채 끝까지 고정', 'elbowL', [-22, -20]], ['등·머리는 등받이에, 어깨는 내리고 가슴은 펴기', 'shoulderR', [24, -26]], ['큰 원을 그리듯 모아 1초 쥐어짜고, 벌릴 땐 어깨 뒤로 넘기지 않기']], breath: BR.iso });
@@ -707,7 +924,7 @@ PT.lateral = (o = {}) => {
   const eq = [];
   if (k === 'db') eq.push({ t: 'fdb', front: true });
   if (k === 'cable') eq.push(POST(18, 40), POST(302, 40), { t: 'fcable', from: [[24, 194], [296, 194]], cross: true, front: true });
-  if (mach) eq.push({ t: 'rect', x: 128, y: 152, w: 64, h: 10 }, { t: 'line', p: [[160, 162], [160, GY]], w: 6, c: '#3a414f' }, { t: 'fpad', j: ['elbowL', 'elbowR'], offs: { elbowL: [-5, -2], elbowR: [5, -2] }, w: 12, h: 14, front: true });
+  if (mach) eq.push({ t: 'rect', x: 136, y: 80, w: 48, h: 72, c: '#3a414f' }, { t: 'rect', x: 124, y: 150, w: 72, h: 12 }, { t: 'line', p: [[160, 162], [160, GY]], w: 6, c: '#3a414f' }, { t: 'fpad', j: ['elbowL', 'elbowR'], offs: { elbowL: [-5, -2], elbowR: [5, -2] }, w: 14, h: 16, front: true });
   return Fv({ s, e, eq, path: ['handL', 'handR'], lab: ['내린 자세', '어깨 높이'],
     cues: [['팔꿈치를 살짝 굽혀 고정', 'elbowR', [22, -16]], ['손이 아니라 팔꿈치를 옆으로 밀어 올리는 느낌', 'handL', [-24, -16]], ['어깨 높이까지만, 어깨 으쓱·반동 금지', 'shoulderR', [26, -24]], ['내릴 때 2초 천천히']], breath: BR.iso });
 };
@@ -746,7 +963,9 @@ PT.ohp = (o = {}) => {
   const base = { at: ['hip', [160, 150]], th: [[90, 70], [90, 70]], sh: [[0, 0], [0, 0]] };
   const s = k === 'arnold' ? { ...base, ua: [[40, 88], [40, 88]], fa: [[175, 0], [175, 0]] } : { ...base, ua: [[94, 0], [94, 0]], fa: [[176, 0], [176, 0]] };
   const e = { ...base, ua: [[160, 0], [160, 0]], fa: [[168, 180], [168, 180]] };
-  const eq = [{ t: 'rect', x: 136, y: 80, w: 48, h: 74, c: '#3a414f' }, { t: 'rect', x: 128, y: 152, w: 64, h: 10 }, { t: 'line', p: [[160, 162], [160, GY]], w: 6, c: '#3a414f' }];
+  // gym80 Pure Kraft Shoulder Press Dual 4320 https://gym80.de/en/product/4320/
+  // Seated back pad, independent arms, handles start at ear/shoulder height and press overhead.
+  const eq = [{ t: 'rect', x: 136, y: 76, w: 48, h: 78, c: '#3a414f' }, { t: 'rect', x: 124, y: 150, w: 72, h: 12 }, { t: 'line', p: [[160, 162], [160, GY]], w: 6, c: '#3a414f' }];
   eq.push(k === 'db' || k === 'arnold' ? { t: 'fdb', front: true } : { t: 'grip', front: true });
   return Fv({ s, e, eq, path: ['handL', 'handR'], lab: k === 'arnold' ? ['손바닥이 나를 향한 자세', '머리 위'] : ['귀 높이', '머리 위'],
     cues: [['등을 등받이에 붙이고 허리 곧게', 'chest', [28, -22]], ['팔꿈치는 손목 바로 아래, 살짝 앞쪽', 'elbowR', [22, 10]], [k === 'arnold' ? '팔을 돌리며 밀어 올리기 (손바닥 앞으로)' : '귀 높이에서 머리 위로 밀기, 팔꿈치 잠그지 않기', 'handL', [-22, -14]]], breath: BR.push });
@@ -790,14 +1009,59 @@ PT.row = (o = {}) => {
     return S({ s, e, eq: [{ t: 'line', p: [[151, GY], [151, 96]], w: 4, c: '#3a414f' }, { t: 'circle', c: bar, r: 4, fill: '#8a94a7', s: '#8a94a7', w: 1 }], path: ['shoulder'], lab: ['매달린 자세', '당긴 자세'],
       cues: [['몸을 머리~발뒤꿈치 일직선으로', 'hip', [0, 22]], ['가슴을 바로 당기기', 'shoulder', [-20, -16]], ['엉덩이가 처지지 않게']], breath: BR.pull });
   }
-  const seatAt = [118, 158];
-  const seat = { tr: k === 'cable' ? 12 : 0, at: ['hip', seatAt] };
-  const b0 = footTo(seat, k === 'cable' ? [196, 168] : [160, A], k === 'cable' ? 'up' : 'fwd');
-  const hS = { cable: [58, 4], machine: [54, 8], low: [48, 30], high: [38, -44] }[k], hE = { cable: [10, 22], machine: [2, 16], low: [-4, 36], high: [6, 14] }[k];
-  const s = { ...b0, hk: hS, eb: 'down' }, e = { ...b0, tr: k === 'cable' ? -4 : 0, hk: hE, eb: k === 'high' ? 'down' : 'back' };
-  const eq = [{ t: 'line', p: [add(seatAt, [-30, 12]), add(seatAt, [24, 12])], w: 10 }, { t: 'line', p: [add(seatAt, [-6, 16]), [seatAt[0] - 6, GY]], w: 6, c: '#3a414f' }];
-  if (k === 'cable') eq.push({ t: 'line', p: [[208, 150], [208, 182]], w: 6, c: '#7b8698' }, { t: 'cable', from: [300, 150], j: 'handN', front: true }, { t: 'stack', x: 286, y: 40, w: 28, h: 100 });
-  else eq.push({ t: 'torsopad', a: 18, b: 48, off: 15, w: 10 }, { t: 'lever', piv: k === 'high' ? [210, 30] : [228, 70], j: 'handN', front: true });
+  // High row: gym80 Pure Kraft High Row Dual 4340 https://gym80.de/en/product/4340/
+  //   also 4382 (movable handles) https://gym80.de/en/product/4382/
+  //   Panatta Super High Row https://www.panattasport.com/en/free-weight-special/super-high-row/
+  //   Seated facing a chest pad, thigh/knee hold-down, iso-lateral levers whose pivot sits high and behind;
+  //   handles start high in front and travel down-and-back toward the lower chest / upper abs.
+  // Low row: gym80 Pure Kraft Low Row Dual 4319 https://gym80.de/en/product/4319/
+  //   Panatta Super Low Row https://www.panattasport.com/en/free-weight-special/super-low-row/
+  //   Same seated/chest-pad setup; handles start lower and more forward, pulling back toward the stomach.
+  // Machine seated row: selectorized/plate seated row, mid-chest handle path.
+  // Cable: seated cable row, vertical footplate, low pulley to a stack in front.
+  const seatAt = [130, 156];
+  const b0 = footTo({ tr: k === 'cable' ? 12 : k === 'high' ? 8 : 4, at: ['hip', seatAt], ft: [90, 90] }, k === 'cable' ? [200, 170] : [172, A], k === 'cable' ? 'up' : 'fwd');
+  let s, e, piv, eq;
+  if (k === 'high') {
+    piv = [63, 49];
+    s = handTo({ ...b0 }, [180, 64], 'down');
+    e = handTo({ ...b0, tr: 6 }, [140, 138], 'down');
+    eq = [
+      { t: 'line', p: [[63, 20], [63, GY]], w: 6, c: '#3a414f' },
+      { t: 'line', p: [[63, 24], [200, 24]], w: 6, c: '#3a414f' },
+      { t: 'line', p: [[162, 48], [162, GY]], w: 6, c: '#3a414f' },
+      { t: 'line', p: [[48, GY - 2], [220, GY - 2]], w: 5, c: '#3a414f' },
+      { t: 'seat', hip: seatAt },
+      { t: 'torsopad', a: 10, b: 48, off: 14, w: 13 },
+      { t: 'roller', j: 'kneeN', off: [-18, -16], r: 7, front: true },
+      { t: 'isoarm', piv, j: 'handN', front: true, horn: 42 },
+    ];
+  } else if (k === 'low' || k === 'machine') {
+    piv = k === 'low' ? [151, 60] : [138, 49];
+    const hs = k === 'low' ? [190, 124] : [186, 112];
+    const he = k === 'low' ? [138, 134] : [140, 128];
+    s = handTo({ ...b0 }, hs, 'back');
+    e = handTo({ ...b0, tr: 2 }, he, 'back');
+    eq = [
+      { t: 'line', p: [[176, 40], [176, GY]], w: 6, c: '#3a414f' },
+      { t: 'line', p: [[176, 44], [210, 44]], w: 5, c: '#3a414f' },
+      { t: 'seat', hip: seatAt },
+      { t: 'torsopad', a: 12, b: 50, off: 14, w: 13 },
+      { t: 'roller', j: 'kneeN', off: [-16, -14], r: 6.5, front: true },
+      { t: 'isoarm', piv, j: 'handN', front: true, horn: 36 },
+    ];
+  } else {
+    s = handTo({ ...b0 }, [196, 122], 'down');
+    e = handTo({ ...b0, tr: -2 }, [148, 134], 'back');
+    eq = [
+      { t: 'seat', hip: seatAt },
+      { t: 'footplate', p: [208, 166], na: 0, l: 36, th: 8 },
+      { t: 'line', p: [[208, 150], [208, GY]], w: 5, c: '#3a414f' },
+      { t: 'line', p: [[300, 20], [300, GY]], w: 5, c: '#3a414f' },
+      { t: 'cable', from: [300, 148], j: 'handN', front: true },
+      { t: 'stack', x: 286, y: 40, w: 28, h: 100 },
+    ];
+  }
   return S({ s, e, eq, path: ['handN'], pathOff: [0, 14], lab: ['팔 뻗은 자세', '당긴 자세'],
     cues: [[k === 'cable' ? '무릎 살짝 굽히고 허리 곧게' : '가슴 패드에 가슴을 붙이기', 'shoulder', [-22, -16]], ['어깨를 내리고 팔꿈치로 뒤로 당기기', 'elbowN', [-8, 20]], ['날개뼈를 모으고 1초, 돌아갈 땐 등이 늘어나게']], breath: BR.pull });
 };
@@ -813,9 +1077,13 @@ PT.straightArm = () => {
 };
 PT.pullover = (o = {}) => {
   if (o.machine) {
+    // Nautilus-style pullover: seated with back on a pad, elbow pads, handles travel in a large arc from overhead to the lap. Pivot near the shoulder.
     const base = footTo({ tr: -4, at: ['hip', [126, 150]] }, [168, A], 'fwd');
     const s = { ...base, hk: [-18, -54], eb: 'fwd' }, e = { ...base, hk: [26, 46], eb: 'fwd' };
-    return S({ s, e, eq: [{ t: 'torsopad', a: -6, b: 62, off: -14, w: 11 }, { t: 'line', p: [[100, 162], [150, 162]], w: 10 }, { t: 'limbpad', a: 'shoulder', b: 'elbowN', at: 0.95, side: -1, d: 2, r: 7, front: true }],
+    const piv = [118, 88];
+    return S({ s, e, eq: [{ t: 'torsopad', a: -6, b: 62, off: -14, w: 11 }, { t: 'seat', hip: [126, 150] },
+      { t: 'isoarm', piv, j: 'handN', front: true, horn: 28 },
+      { t: 'limbpad', a: 'shoulder', b: 'elbowN', at: 0.95, side: -1, d: 2, r: 7, front: true }],
       path: ['elbowN'], lab: ['머리 위', '몸 앞'], cues: [['어깨를 회전축 높이에 맞추기', 'shoulder', [-24, -10]], ['팔꿈치로 패드를 눌러 원을 그리기', 'elbowN', [18, -10]], ['손은 가볍게, 광배로']], breath: BR.pull });
   }
   const base = footTo({ tr: -90, at: ['hip', [196, 136]], ft: [90, 90] }, [232, A], 'up');
@@ -829,7 +1097,15 @@ PT.pulldown = (o = {}) => {
   const sU = k === 'wide' || k === 'iso' ? [164, 0] : [172, 0], sF = k === 'wide' || k === 'iso' ? [170, 0] : [174, 0];
   const eU = k === 'close' || k === 'reverse' ? [40, 60] : [48, 0], eF = [175, 180];
   const s = { ...base, ua: [sU, sU], fa: [sF, sF] }, e = { ...base, ua: [eU, eU], fa: [eF, eF] };
-  const eq = [{ t: 'rect', x: 128, y: 152, w: 64, h: 10 }, { t: 'line', p: [[160, 162], [160, GY]], w: 6, c: '#3a414f' }, { t: 'fpad', j: ['kneeL', 'kneeR'], off: [0, -9], w: 22, h: 9, front: true }];
+  // gym80 Pure Kraft Lat Pulldown Dual 4311 https://gym80.de/en/product/4311/
+  // Tall frame, height-adjustable seat, thigh hold-down rollers; independent arms (iso) or a wide bar from a high pulley.
+  const eq = [
+    { t: 'line', p: [[48, 8], [272, 8]], w: 6, c: '#3a414f' },
+    { t: 'line', p: [[56, 8], [56, GY]], w: 6, c: '#3a414f' },
+    { t: 'line', p: [[264, 8], [264, GY]], w: 6, c: '#3a414f' },
+    { t: 'rect', x: 124, y: 150, w: 72, h: 12 }, { t: 'line', p: [[160, 162], [160, GY]], w: 6, c: '#3a414f' },
+    { t: 'fpad', j: ['kneeL', 'kneeR'], off: [0, -9], w: 26, h: 10, front: true }
+  ];
   if (k === 'iso') eq.push({ t: 'flever', piv: [[120, 6], [200, 6]], front: true });
   else if (k === 'one') { s.ua = [[20, 0], sU]; e.ua = [[20, 0], eU]; s.fa = [[70, 90], sF]; e.fa = [[70, 90], eF]; eq.push({ t: 'fcable1', from: [196, 6], j: 'handR', front: true }); }
   else eq.push({ t: 'midcable', from: [160, 6] }, { t: 'fbar', ext: k === 'wide' ? 16 : 6, plates: false, front: true });
@@ -856,13 +1132,14 @@ PT.dips = (o = {}) => {
       cues: [['손은 엉덩이 바로 옆 벤치 끝에', 'handN', [-18, -14]], ['엉덩이는 벤치에 가깝게 수직으로 내리기', 'hip', [-20, 12]], ['어깨가 앞으로 말리면 범위 줄이기']], breath: BR.push });
   }
   if (k === 'machine') {
+    // Seated dip / triceps dip machine: back pad, independent handles at the hips pressing downward. Pivot beside the hip.
     const base = footTo({ tr: 0, at: ['hip', [126, 150]] }, [168, A], 'fwd');
-    const s = { ...base, hk: [10, 18], eb: 'back' }, e = { ...base, hk: [4, 56] };
-    return S({ s, e, eq: [{ t: 'torsopad', a: -6, b: 60, off: -14, w: 11 }, { t: 'line', p: [[100, 162], [150, 162]], w: 10 }, { t: 'lever', piv: [60, 120], j: 'handN', front: true }], path: ['handN'], pathOff: [14, 0], lab: ['굽힌 자세', '편 자세'],
+    const s = { ...base, hk: [10, 18], eb: 'back' }, e = { ...base, hk: [4, 56], eb: 'back' };
+    return S({ s, e, eq: [{ t: 'torsopad', a: -6, b: 60, off: -14, w: 11 }, { t: 'seat', hip: [126, 150] }, { t: 'isoarm', piv: [72, 128], j: 'handN', front: true, horn: 28 }], path: ['handN'], pathOff: [14, 0], lab: ['굽힌 자세', '편 자세'],
       cues: [['어깨를 내리고 가슴 펴기', 'shoulder', [-22, -12]], ['팔꿈치를 몸 옆에 붙인 채 아래로 밀기', 'elbowN', [16, -10]], ['끝에서 삼두를 조이고 천천히 올라오기']], breath: BR.push });
   }
   const hand = [168, 118];
-  const legs = k === 'assist' ? { th: [86, 86], sh: [-90, -90], ft: [0, 0] } : { th: [8, 8], sh: [-60, -60], ft: [20, 20] };
+  const legs = k === 'assist' ? { th: [86, 86], sh: [-78, -78], ft: [0, 0] } : { th: [8, 8], sh: [-60, -60], ft: [20, 20] };
   const s = { tr: 8, at: ['handN', hand], ua: [4, 4], fa: [4, 4], ...legs }, e = { ...s, tr: 22, ua: [-60, -60], fa: [20, 20] };
   const eq = [{ t: 'line', p: [[120, hand[1] + 4], [228, hand[1] + 4]], w: 5, c: '#8a94a7', front: true }, POST(220, hand[1] + 4)];
   if (k === 'assist') eq.push({ t: 'limbbar', a: 'kneeN', b: 'ankleN', side: 1, d: 9, w: 8, front: true });
@@ -896,7 +1173,8 @@ PT.trikick = (o = {}) => {
 PT.triMachine = () => {
   const base = footTo({ tr: -4, at: ['hip', [120, 150]] }, [162, A], 'fwd');
   const s = { ...base, ua: [52, 52], fa: [176, 176] }, e = { ...s, fa: [52, 52] };
-  return S({ s, e, eq: [{ t: 'torsopad', a: -6, b: 60, off: -14, w: 11 }, { t: 'line', p: [[96, 162], [146, 162]], w: 10 }, { t: 'limbbar', a: 'shoulder', b: 'elbowN', side: 1, d: -9, w: 8, front: true }], path: ['handN'], lab: ['굽힌 자세', '편 자세'],
+  const piv = sideJ(s).elbowN;
+  return S({ s, e, eq: [{ t: 'torsopad', a: -6, b: 60, off: -14, w: 11 }, { t: 'seat', hip: [120, 150] }, { t: 'limbbar', a: 'shoulder', b: 'elbowN', side: 1, d: -9, w: 8, front: true }, { t: 'lever', piv: [piv[0], piv[1]], j: 'handN', front: true }], path: ['handN'], lab: ['굽힌 자세', '편 자세'],
     cues: [['팔꿈치를 회전축에 맞춰 패드에 고정', 'elbowN', [14, 14]], ['팔꿈치만 펴서 끝까지', 'handN', [18, 6]], ['천천히 돌아오기']], breath: BR.iso });
 };
 PT.curl = (o = {}) => {
@@ -904,9 +1182,10 @@ PT.curl = (o = {}) => {
   if (k === 'preacher' || k === 'machine') {
     const base = footTo({ tr: 14, at: ['hip', [118, 150]] }, [162, A], 'fwd');
     const s = { ...base, ua: [40, 40], fa: [44, 44] }, e = { ...base, ua: [40, 40], fa: [178, 178] };
-    const eq = [{ t: 'line', p: [[96, 162], [146, 162]], w: 10 }, { t: 'line', p: [[120, 162], [120, GY]], w: 6, c: '#3a414f' }, { t: 'limbpad', a: 'shoulder', b: 'elbowN', at: 0.75, side: 1, d: 9, r: 0, front: true }, { t: 'limbbar', a: 'shoulder', b: 'elbowN', side: 1, d: 9, w: 10 }];
-    eq.push(k === 'machine' ? { t: 'lever', piv: [0, 0], j: 'handN', none: true } : { t: 'bar', j: 'handN', front: true, r: 13 });
-    return S({ s, e, eq: eq.filter(x => !x.none), path: ['handN'], lab: ['편 자세', '굽힌 자세'],
+    const piv = sideJ(s).elbowN;
+    const eq = [{ t: 'seat', hip: [118, 150] }, { t: 'limbpad', a: 'shoulder', b: 'elbowN', at: 0.75, side: 1, d: 9, r: 0, front: true }, { t: 'limbbar', a: 'shoulder', b: 'elbowN', side: 1, d: 9, w: 10 }];
+    eq.push(k === 'machine' ? { t: 'lever', piv: [piv[0], piv[1]], j: 'handN', front: true } : { t: 'bar', j: 'handN', front: true, r: 13 });
+    return S({ s, e, eq, path: ['handN'], lab: ['편 자세', '굽힌 자세'],
       cues: [['겨드랑이를 패드 위 끝에 붙이기', 'shoulder', [-22, -12]], ['팔꿈치를 패드에 고정한 채 굽히기', 'elbowN', [18, 14]], ['완전히 펴기 직전까지 천천히 내리기 (팔꿈치 잠금 주의)']], breath: BR.iso });
   }
   if (k === 'incline') {
@@ -950,7 +1229,7 @@ PT.crunch = (o = {}) => {
   if (k === 'machine') {
     const base = footTo({ tr: -4, at: ['hip', [126, 150]] }, [168, A], 'fwd');
     const s = { ...base, ua: [150, 150], fa: [20, 20] }, e = { ...base, tr: 34, ua: [150, 150], fa: [20, 20] };
-    return S({ s, e, eq: [{ t: 'line', p: [[100, 162], [150, 162]], w: 10 }, { t: 'limbpad', a: 'shoulder', b: 'elbowN', at: 0.2, side: -1, d: 8, r: 6, front: true }], path: ['head'], lab: ['편 자세', '말아 숙인 자세'],
+    return S({ s, e, eq: [{ t: 'seat', hip: [126, 150] }, { t: 'line', p: [[78, 70], [78, GY]], w: 5, c: '#3a414f' }, { t: 'limbpad', a: 'shoulder', b: 'elbowN', at: 0.2, side: -1, d: 8, r: 6, front: true }], path: ['head'], lab: ['편 자세', '말아 숙인 자세'],
       cues: [['패드를 가슴·어깨에 맞추기', 'shoulder', [-22, -12]], ['허리가 아니라 명치를 접는 느낌', 'chest', [16, -10]], ['천천히 돌아오기']], breath: BR.core });
   }
   const dec = k === 'decline';
@@ -1133,7 +1412,7 @@ PT.legraise = (o = {}) => {
     reverse: [{ th: [168, 168], sh: [84, 84] }, { tr: -78, th: [212, 212], sh: [126, 126] }],
     vup: [{ th: [96, 96], sh: [96, 96], ft: [180, 180], ua: [-96, -96], fa: [-96, -96] }, { tr: -42, th: [138, 138], sh: [138, 138], ft: [220, 220], ua: [118, 118], fa: [124, 124] }],
     deadbug: [{ th: [180, 180], sh: [90, 90], ua: [180, 180], fa: [180, 180] }, { th: [100, 180], sh: [100, 90], ft: [180, 90], ua: [180, -100], fa: [180, -100] }],
-    bicycle: [{ tr: -72, th: [168, 112], sh: [84, 112], ft: [180, 180], ua: [-140, -140], fa: [40, 40] }, { tr: -72, th: [112, 168], sh: [112, 84], ft: [180, 180], ua: [-140, -140], fa: [40, 40] }],
+    bicycle: [{ tr: -72, th: [168, 112], sh: [84, 112], ft: [180, 180], ua: [-140, -140], fa: [20, 20] }, { tr: -72, th: [112, 168], sh: [112, 84], ft: [180, 180], ua: [-140, -140], fa: [20, 20] }],
   }[k];
   const s = { ...base, ...P[0] }, e = { ...base, ...P[1] };
   const txt = { lying: '허리가 뜨기 직전까지만 다리를 내리기', reverse: '무릎을 가슴 쪽으로, 엉덩이를 살짝 들어 골반 말기', vup: '팔과 다리를 동시에 들어 V자 만들기', deadbug: '반대쪽 팔·다리를 천천히 뻗기', bicycle: '팔꿈치와 반대 무릎을 가깝게 비틀기' }[k];
@@ -1323,9 +1602,9 @@ function start(root, ex) {
   const live = stage.querySelector('.live'), mks = stage.querySelector('.mks'), top = stage.querySelector('.top'), btn = stage.querySelector('.form-play');
   const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const { p, s } = musclesFor(ex);
-  const T = 3600; let playing = !reduce, t0 = performance.now(), last = 0;
+  const T = 4200; let playing = !reduce, t0 = performance.now(), last = 0;
   const ease = x => x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
-  const phase = ms => { const u = (ms % T) / T; if (u < 0.12) return 0; if (u < 0.5) return ease((u - 0.12) / 0.38); if (u < 0.62) return 1; return 1 - ease((u - 0.62) / 0.38); };
+  const phase = ms => { const u = (ms % T) / T; if (u < 0.05) return 0; if (u < 0.29) return ease((u - 0.05) / 0.24); if (u < 0.38) return 1; if (u < 0.86) return 1 - ease((u - 0.38) / 0.48); return 0; };
   const draw = t => { const r = SC.scene(pat, t, { hiP: p, hiS: s }); live.innerHTML = r.svg; mks.innerHTML = SC.marks(pat, r.J); if (top && pat.top) top.innerHTML = topInset(pat, t); };
   const tick = now => { if (!document.body.contains(live)) return stop(); if (playing) { last = now - t0; draw(phase(last)); } raf = requestAnimationFrame(tick); };
   if (btn) { btn.textContent = playing ? '⏸' : '▶'; btn.onclick = () => { playing = !playing; if (playing) t0 = performance.now() - last; btn.textContent = playing ? '⏸' : '▶'; }; }
@@ -1349,5 +1628,68 @@ function thumbHtml(ex, size = 44) {
   const svg = `<svg class="ex-thumb-svg" viewBox="${VB}" width="${size}" height="${size}" aria-hidden="true" focusable="false">${SC.DEFS}${f.body}</svg>`;
   return (THUMB_CACHE[ex.id] = svg);
 }
-window.FORMS = { topInset, patternFor, musclesFor, bodyMapSvg, guideFigureHtml, start, stop, MAP: M, thumbHtml, frameSvg };
+function flexSide(a, j, b) {
+  const u = E.nrm(E.sub(j, a)), v = E.nrm(E.sub(b, j));
+  const d = Math.max(-1, Math.min(1, u[0] * v[0] + u[1] * v[1]));
+  return { flex: Math.acos(d) * 180 / Math.PI, side: (u[0] * v[1] - u[1] * v[0]) >= 0 ? 1 : -1 };
+}
+function flex3(ua, fa) {
+  const R = Math.PI / 180;
+  const d3 = (e, h) => [Math.sin(e * R) * Math.cos(h * R), Math.cos(e * R), Math.sin(e * R) * Math.sin(h * R)];
+  const u = d3(ua[0], ua[1]), v = d3(fa[0], fa[1]);
+  const du = Math.hypot(u[0], u[1], u[2]) || 1, dv = Math.hypot(v[0], v[1], v[2]) || 1;
+  return Math.acos(Math.max(-1, Math.min(1, (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (du * dv)))) * 180 / Math.PI;
+}
+function motionReport(exOrId) {
+  const ex = typeof exOrId === 'string'
+    ? ((window.EXERCISES || []).find(x => x.id === exOrId) || { id: exOrId, base: exOrId })
+    : exOrId;
+  if (!ex) return { id: '?', ok: false, issues: ['no-exercise'] };
+  const pat = patternFor(ex);
+  if (!pat) return { id: ex.id, ok: false, issues: ['no-pattern'] };
+  const issues = [], samples = [];
+  const side = pat.view === 'side';
+  let side0 = null;
+  [0, 0.2, 0.4, 0.5, 0.6, 0.8, 1].forEach(t => {
+    const J = SC.scene(pat, t).J;
+    if (side) {
+      const check = [
+        ['thighN', E.len(E.sub(J.kneeN, J.hip)), E.LEN.thigh],
+        ['shinN', E.len(E.sub(J.ankleN, J.kneeN)), E.LEN.shin],
+        ['uaN', E.len(E.sub(J.elbowN, J.shoulder)), E.LEN.ua],
+        ['faN', E.len(E.sub(J.wristN, J.elbowN)), E.LEN.fa],
+      ];
+      check.forEach(([name, got, exp]) => {
+        if (Math.abs(got - exp) > 1.25) issues.push(`t=${t} ${name} len ${got.toFixed(1)} != ${exp}`);
+      });
+      const kn = flexSide(J.hip, J.kneeN, J.ankleN);
+      const en = flexSide(J.shoulder, J.elbowN, J.wristN);
+      if (kn.flex < -0.5 || kn.flex > 170) issues.push(`t=${t} kneeN flex ${kn.flex.toFixed(1)}`);
+      if (en.flex < -0.5 || en.flex > 170) issues.push(`t=${t} elbowN flex ${en.flex.toFixed(1)}`);
+      if (!side0) side0 = { k: kn.side, e: en.side, kf: kn.flex, ef: en.flex };
+      else {
+        if (kn.flex > 12 && side0.kf > 12 && kn.side !== side0.k) issues.push(`t=${t} knee bent backward (side flip)`);
+        if (en.flex > 12 && side0.ef > 12 && en.side !== side0.e) issues.push(`t=${t} elbow bent backward (side flip)`);
+      }
+      samples.push({ t, knee: +kn.flex.toFixed(1), elbow: +en.flex.toFixed(1) });
+    } else {
+      const p = J._p || {};
+      if (p.ua && p.fa && Array.isArray(p.ua[0])) {
+        const eL = flex3(p.ua[0], p.fa[0]), eR = flex3(p.ua[1], p.fa[1]);
+        const kL = flex3(p.th[0], p.sh[0]), kR = flex3(p.th[1], p.sh[1]);
+        [ ['elbowL', eL], ['elbowR', eR], ['kneeL', kL], ['kneeR', kR] ].forEach(([n, f]) => {
+          if (f < -0.5 || f > 170) issues.push(`t=${t} ${n} flex ${f.toFixed(1)}`);
+        });
+        samples.push({ t, elbowL: +eL.toFixed(1), elbowR: +eR.toFixed(1), kneeL: +kL.toFixed(1), kneeR: +kR.toFixed(1) });
+      } else samples.push({ t });
+    }
+  });
+  return { id: ex.id, view: pat.view, ok: issues.length === 0, issues, samples };
+}
+function checkAllMotion(ids) {
+  const list = ids || Object.keys(M);
+  const rows = list.map(id => motionReport(id));
+  return { ok: rows.every(r => r.ok), failed: rows.filter(r => !r.ok), count: rows.length };
+}
+window.FORMS = { topInset, patternFor, musclesFor, bodyMapSvg, guideFigureHtml, start, stop, MAP: M, thumbHtml, frameSvg, motionReport, checkAllMotion };
 })();
