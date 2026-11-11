@@ -230,3 +230,15 @@ details.guide summary{cursor:pointer;font-weight:700;font-size:14px}
 .ex-thumb-fb[data-g="복근"]{background:#134e4a}
 .ex-thumb-fb[data-g="유산소"]{background:#1e3a8a}
 .ex-list-main{flex:1;min-width:0}
+
+.rv-sec{margin:16px 0 4px}
+.rv-sec h3{margin:0 0 8px;font-size:16px}
+.rv-sec p{margin:0 0 8px;line-height:1.5}
+.rv-ex{background:var(--card2);border-radius:12px;padding:10px 12px;margin-top:8px}
+.rv-ex .nm{font-weight:700}
+.rv-ex .meta{font-size:12px;color:var(--muted);margin-top:2px}
+.rv-ex p{margin:8px 0 0;font-size:14px;line-height:1.45}
+.rv-tag{display:inline-block;font-size:11px;font-weight:700;padding:1px 6px;border-radius:999px;margin-left:6px;background:#1d4e3a;color:#86efac;vertical-align:middle}
+.rv-tag.same{background:#2b303b;color:var(--muted)}
+.rv-tag.down{background:#3a2424;color:#fca5a5}
+.rv-food{background:var(--card2);border-radius:10px;padding:8px 10px;margin-top:6px;font-size:14px;line-height:1.45}
