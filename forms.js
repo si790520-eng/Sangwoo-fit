@@ -2,7 +2,7 @@
    - 동작 패턴별로 시작/끝 자세를 관절 각도로 정의하고, 같은 엔진으로 그려요.
    - 애니메이션은 관절 각을 보간한 뒤 손·발 접점에 2-bone IK를 써서 뼈 길이를 유지해요.
    - 옆모습(side)과 앞/뒤모습(front/back, 3D 각도를 평면에 투영) 두 가지 시점.
-   - 외부 이미지 없이 189개 운동 전부를 덮어요. */
+   - 외부 이미지 없이 기본 운동 전부를 덮어요. */
 (function () {
 'use strict';
 const R = Math.PI / 180;
@@ -316,7 +316,10 @@ function eqSide(it, J) {
     }
     case 'isoarm': {
       const q = jp(J, it.j || 'handN', it.off), piv = it.piv, horn = it.horn == null ? 38 : it.horn;
-      const v = nrm(sub(q, piv)), far = add(piv, v, -horn);
+      const v0 = nrm(sub(q, piv));
+      const ha = ((it.hornAng == null ? 180 : it.hornAng) * Math.PI) / 180;
+      const v = [v0[0] * Math.cos(ha) - v0[1] * Math.sin(ha), v0[0] * Math.sin(ha) + v0[1] * Math.cos(ha)];
+      const far = add(piv, v, horn);
       return ln([far, q], it.w || 6, it.c || C.eq) + circ(piv, 5, C.eqDark) + circ(q, 4.5, C.eqHi)
         + (horn > 4 ? circ(far, it.pr || 12, C.eqDark, ` stroke="${C.eqHi}" stroke-width="2"`) + circ(far, (it.pr || 12) * 0.62, '#4a5466') + circ(far, 3, C.eqHi) : '');
     }
@@ -1020,9 +1023,34 @@ PT.row = (o = {}) => {
   // Machine seated row: selectorized/plate seated row, mid-chest handle path.
   // Cable: seated cable row, vertical footplate, low pulley to a stack in front.
   const seatAt = [130, 156];
-  const b0 = footTo({ tr: k === 'cable' ? 12 : k === 'high' ? 8 : 4, at: ['hip', seatAt], ft: [90, 90] }, k === 'cable' ? [200, 170] : [172, A], k === 'cable' ? 'up' : 'fwd');
+  const b0 = footTo({ tr: k === 'cable' ? 12 : k === 'high' ? 8 : k === 'circular' ? 6 : 4, at: ['hip', seatAt], ft: [90, 90] }, k === 'cable' ? [200, 170] : [172, A], k === 'cable' ? 'up' : 'fwd');
   let s, e, piv, eq;
-  if (k === 'high') {
+  if (k === 'circular') {
+    // Panatta Super Rowing Circular 1FW204 (Freeweight Special, plate-loaded)
+    //   https://www.panattasport.com/en/free-weight-special/super-rowing-machine-circular/
+    // Fit Evo Rowing Machine Circular 1FE004A (selectorized, same seated/circular geometry)
+    //   https://www.panattasport.com/en/fit-evo/rowing-machine-circular/
+    // Also Monolith Rowing Machine Circular 1MTH004A (same movement; not a catalogued line here)
+    //   https://www.panattasport.com/en/monolith/rowing-machine-circular-2/
+    // Official photos: seated facing a chest pad, feet on the floor / small peg, independent
+    // curved levers rotating about a mid-low pivot in front of the pad. Handles start with
+    // arms nearly straight (reaching forward) and travel in a circular arc back toward mid/lower chest.
+    piv = [190, 172];
+    s = handTo({ ...b0 }, [202, 108], 'down');
+    e = handTo({ ...b0, tr: 4 }, [150, 120], 'back');
+    eq = [
+      { t: 'line', p: [[40, GY - 2], [268, GY - 2]], w: 6, c: '#3a414f' },
+      { t: 'line', p: [[248, GY], [248, 78]], w: 6, c: '#3a414f' },
+      { t: 'pathd', d: 'M228,78 Q248,48 268,78', s: '#3a414f', w: 6 },
+      { t: 'circle', c: [248, 92], r: 11, fill: '#3d4554', s: '#9aa4b8', w: 1.5 },
+      { t: 'circle', c: [248, 116], r: 13, fill: '#3d4554', s: '#9aa4b8', w: 1.5 },
+      { t: 'circle', c: [248, 144], r: 15, fill: '#3d4554', s: '#9aa4b8', w: 1.5 },
+      { t: 'seat', hip: seatAt },
+      { t: 'torsopad', a: 12, b: 50, off: 14, w: 13 },
+      { t: 'line', p: [[200, 186], [218, 186]], w: 5, c: '#7b8698' },
+      { t: 'isoarm', piv, j: 'handN', front: true, horn: 52, hornAng: 55 },
+    ];
+  } else if (k === 'high') {
     piv = [63, 49];
     s = handTo({ ...b0 }, [180, 64], 'down');
     e = handTo({ ...b0, tr: 6 }, [140, 138], 'down');
@@ -1062,8 +1090,11 @@ PT.row = (o = {}) => {
       { t: 'stack', x: 286, y: 40, w: 28, h: 100 },
     ];
   }
-  return S({ s, e, eq, path: ['handN'], pathOff: [0, 14], lab: ['팔 뻗은 자세', '당긴 자세'],
-    cues: [[k === 'cable' ? '무릎 살짝 굽히고 허리 곧게' : '가슴 패드에 가슴을 붙이기', 'shoulder', [-22, -16]], ['어깨를 내리고 팔꿈치로 뒤로 당기기', 'elbowN', [-8, 20]], ['날개뼈를 모으고 1초, 돌아갈 땐 등이 늘어나게']], breath: BR.pull });
+  const circCues = k === 'circular';
+  return S({ s, e, eq, path: ['handN'], pathOff: circCues ? [10, -8] : [0, 14], lab: ['팔 뻗은 자세', '당긴 자세'],
+    cues: circCues
+      ? [['가슴 패드에 가슴을 붙이고, 손잡이가 팔을 뻗어 닿게 시트 높이를 맞추기', 'shoulder', [-22, -16]], ['어깨를 내린 채 회전 손잡이를 잡고, 발은 바닥(발걸이)에 고정', 'toeN', [18, -10]], ['팔꿈치를 뒤로 보내며 손잡이가 큰 호를 그리듯 아랫가슴·명치 쪽으로', 'elbowN', [-8, 18],], ['날개뼈를 모으고 1초, 같은 호를 따라 등이 늘어나게 천천히 돌아오기']]
+      : [[k === 'cable' ? '무릎 살짝 굽히고 허리 곧게' : '가슴 패드에 가슴을 붙이기', 'shoulder', [-22, -16]], ['어깨를 내리고 팔꿈치로 뒤로 당기기', 'elbowN', [-8, 20]], ['날개뼈를 모으고 1초, 돌아갈 땐 등이 늘어나게']], breath: BR.pull });
 };
 PT.facepull = () => {
   const s = { tr: 0, at: ['ankleN', [150, A]], th: [10, -10], sh: [0, -10], hk: [56, 4], eb: 'down' }, e = { ...s, hk: [4, -14], eb: 'up' };
@@ -1462,7 +1493,7 @@ const M = {
   pullup: ['pullup'], chinup: ['pullup', { k: 'chin' }], assisted_pullup: ['pullup', { k: 'assist' }],
   barbell_row: ['row', { k: 'bent' }], pendlay_row: ['row', { k: 'pendlay' }], tbar_row: ['row', { k: 'tbar' }], meadows_row: ['row', { k: 'tbar' }], smith_row: ['row', { k: 'smith' }],
   db_row: ['row', { k: 'db' }], chest_supported_row: ['row', { k: 'chest' }], inverted_row: ['row', { k: 'inverted' }], seated_row: ['row', { k: 'cable' }], one_arm_cable_row: ['row', { k: 'cable' }],
-  machine_row: ['row', { k: 'machine' }], hs_seated_row: ['row', { k: 'machine' }], low_row: ['row', { k: 'low' }], high_row: ['row', { k: 'high' }],
+  machine_row: ['row', { k: 'machine' }], hs_seated_row: ['row', { k: 'machine' }], low_row: ['row', { k: 'low' }], high_row: ['row', { k: 'high' }], circular_row: ['row', { k: 'circular' }],
   face_pull: ['facepull'], straight_arm_pulldown: ['straightArm'], back_ext: ['backext'], superman: ['backext', { superman: true }],
   shrug: ['shrug'], smith_shrug: ['shrug'], db_shrug: ['shrug', { db: true }],
   ohp: ['ohp', { k: 'bar' }], smith_ohp: ['ohp', { k: 'smith' }], landmine_press: ['ohp', { k: 'landmine' }], db_shoulder: ['ohp', { k: 'db' }], arnold_press: ['ohp', { k: 'arnold' }],
