@@ -1336,6 +1336,9 @@ function renderSettings() {
     <div class="card"><h3 style="margin:0 0 6px">📱 홈 화면에 추가</h3>
       <p class="small" style="margin:0">아이폰: 사파리 하단 <b>공유</b> → <b>홈 화면에 추가</b><br>안드로이드: 크롬 메뉴(⋮) → <b>홈 화면에 추가</b> 또는 <b>앱 설치</b><br><span class="muted">한 번 열고 나면 인터넷 없이도 동작해요.</span></p></div>
     <button class="btn block" id="evBtn" style="margin-bottom:12px">📚 계산·음식 데이터 근거 (논문·출처)</button>
+    <div class="card"><h3 style="margin:0 0 6px">🍳 퇴근 후 집밥</h3>
+      <p class="muted small" style="margin:0 0 10px">한식·양식·중식·일식 레시피와 냉장고 재료. 운동 기록과는 따로 저장돼요.</p>
+      <a class="btn block" href="recipes/" style="text-decoration:none;color:inherit">레시피 앱 열기</a></div>
     <button class="btn danger block" id="wipe">전체 기록 삭제</button>
     <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v14 · 상우님 전용 💪</p>`;
   $('#evBtn').onclick = () => go('#/evidence');
