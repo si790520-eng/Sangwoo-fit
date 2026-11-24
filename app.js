@@ -1336,11 +1336,8 @@ function renderSettings() {
     <div class="card"><h3 style="margin:0 0 6px">📱 홈 화면에 추가</h3>
       <p class="small" style="margin:0">아이폰: 사파리 하단 <b>공유</b> → <b>홈 화면에 추가</b><br>안드로이드: 크롬 메뉴(⋮) → <b>홈 화면에 추가</b> 또는 <b>앱 설치</b><br><span class="muted">한 번 열고 나면 인터넷 없이도 동작해요.</span></p></div>
     <button class="btn block" id="evBtn" style="margin-bottom:12px">📚 계산·음식 데이터 근거 (논문·출처)</button>
-    <div class="card"><h3 style="margin:0 0 6px">🍳 퇴근 후 집밥</h3>
-      <p class="muted small" style="margin:0 0 10px">한식·양식·중식·일식 레시피와 냉장고 재료. 운동 기록과는 따로 저장돼요.</p>
-      <a class="btn block" href="recipes/" style="text-decoration:none;color:inherit">레시피 앱 열기</a></div>
     <button class="btn danger block" id="wipe">전체 기록 삭제</button>
-    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v14 · 상우님 전용 💪</p>`;
+    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v15 · 상우님 전용 💪</p>`;
   $('#evBtn').onclick = () => go('#/evidence');
   const fname = () => `fitlog-backup-${todayStr()}.json`;
   const markBackup = () => { db.meta.lastBackup = todayStr(); save(); };
@@ -1561,14 +1558,14 @@ function todayDietHtml() {
 
 // ───────── 식단 화면
 // 음식 DB(foods.js)는 100g(음료·국물은 100ml)당 값 + 이름 붙은 분량(por: [라벨, g])을 가져요.
-// brand_foods.js 의 each:true 항목은 k/p/c/f 가 1회 제공량당이에요(세트·감튀처럼 공식 중량이 없을 때).
+// brand_foods.js · home_recipes.js 의 each:true 항목은 k/p/c/f 가 1회 제공량당이에요(세트·감튀·집밥 1인분처럼 공식 중량이 없거나 인분 단위일 때).
 // 옛 방식(1회 제공량당 값) 직접입력 음식은 per100이 없으므로 "인분" 단위로만 다뤄요.
 const allFoods = () => [...window.FOODS, ...db.customFoods];
 const foodById = id => allFoods().find(f => f.id === id);
 const per100 = f => f && f.k != null ? { kcal: f.k, protein: f.p, carbs: f.c, fat: f.f } : null;
 const uOf = f => (f && f.unit) || 'g';
 const porLbl = (f, p) => /\d/.test(p[0]) && p[0].includes(String(p[1])) ? p[0].replace(/≈$/, '') : `${p[0].replace(/≈$/, '')} (${p[0].endsWith('≈') ? '약 ' : ''}${fmt(p[1])}${uOf(f)})`;
-const SRC_LBL = { '농진청': '농촌진흥청 국가표준식품성분표', '식약처': '식약처 식품영양성분DB(음식)', '식약처 제품': '식약처 가공식품DB', 'USDA': 'USDA FoodData Central', '직접 입력': '직접 입력', '버거킹': '버거킹 공식 영양정보', '맥도날드': '맥도날드 공식 영양분석표', '롯데리아': '롯데리아 공식 영양성분표', '스타벅스': '스타벅스 공식 메뉴 영양정보' };
+const SRC_LBL = { '농진청': '농촌진흥청 국가표준식품성분표', '식약처': '식약처 식품영양성분DB(음식)', '식약처 제품': '식약처 가공식품DB', 'USDA': 'USDA FoodData Central', '직접 입력': '직접 입력', '버거킹': '버거킹 공식 영양정보', '맥도날드': '맥도날드 공식 영양분석표', '롯데리아': '롯데리아 공식 영양성분표', '스타벅스': '스타벅스 공식 메뉴 영양정보', '내 요리': '내 요리 · 원재료 공식값 합산' };
 const fmtMac = n => (n == null || Number.isNaN(Number(n))) ? '—' : fmt(n);
 const scaleMac = (v, factor) => v == null ? null : v * factor;
 function macrosFor(f, g) {
@@ -1587,7 +1584,7 @@ function foodSub(f) {
   if (!per100(f)) return `${esc(f.serving)} · ${fmt(f.kcal)}kcal · 단백질 ${fmt(f.protein)}g`;
   const p = (f.por || [])[0], g = p ? p[1] : (f.each ? 1 : 100), m = macrosFor(f, g);
   const kcalTxt = m.kcal != null && m.kcal >= 10 ? Math.round(m.kcal).toLocaleString('ko-KR') : fmtMac(m.kcal);
-  return `${p ? esc(porLbl(f, p)) : (f.each ? '1회' : `100${uOf(f)}`)} ${kcalTxt}kcal · 단 ${fmtProtein(m.protein, f)}g <span class="src-tag">${esc(f.src || '')}${f.pEst || f.est ? '·추정' : ''}</span>`;
+  return `${p ? esc(porLbl(f, p)) : (f.each ? '1회' : `100${uOf(f)}`)} ${kcalTxt}kcal · 단 ${fmtProtein(m.protein, f)}g <span class="src-tag${f.cat==='내 요리'?' home':''}">${esc(f.src || '')}${f.pEst || f.est ? '·추정' : ''}</span>`;
 }
 function fmtProtein(n, f) {
   const base = fmtMac(n);
@@ -1745,7 +1742,7 @@ function srcHtml(f) {
     ${f.state ? `<div>상태: ${esc(f.state)}</div>` : ''}
     <div class="muted">출처: ${f.src === '식약처 제품' ? esc(f.srcNote) : `${esc(SRC_LBL[f.src] || f.src || '')}${f.srcName ? ` — ${esc(f.srcName)}` : ''}${f.srcNote && f.src !== '직접 입력' ? `<br>${esc(f.srcNote)}` : ''}`}</div>
     ${f.pEst ? '<div class="warn">단백질은 추정값이에요(≈). 칼로리는 공식 값 그대로예요.</div>' : ''}
-    ${f.est ? '<div class="warn">여러 재료가 섞인 음식이라 집·식당마다 차이가 커요(추정치).</div>' : ''}
+    ${f.src === '내 요리' ? '<div class="warn">원재료 공식값(농진청·식약처)을 합산했어요. 실제 조리(수분·기름)에 따라 달라질 수 있어요.</div>' : f.est ? '<div class="warn">여러 재료가 섞인 음식이라 집·식당마다 차이가 커요(추정치).</div>' : ''}
     ${f.note ? `<div>💡 ${esc(f.note)}</div>` : ''}
     ${(f.por || []).some(p => p[0].endsWith('≈')) ? '<div class="muted">"약"이 붙은 분량은 일반적인 어림값이에요. 정확히 하려면 g으로 입력하세요.</div>' : ''}
   </div>`;
