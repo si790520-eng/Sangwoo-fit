@@ -1,5 +1,5 @@
-const CACHE = "recipes-v1";
-const ASSETS = ["./", "./index.html", "./css/app.css", "./js/recipes.js", "./js/app.js", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png"];
+const CACHE = "recipes-v2";
+const ASSETS = ["./", "./index.html", "./css/app.css", "./js/measure.js", "./js/recipes.js", "./js/more-recipes.js", "./js/more-b.js", "./js/more-c.js", "./js/app.js", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png"];
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
 });

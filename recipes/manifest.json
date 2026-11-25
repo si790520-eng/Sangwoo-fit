@@ -1,12 +1,16 @@
 {
+  "id": "./",
   "name": "상우 집밥",
   "short_name": "집밥",
-  "start_url": "./",
+  "description": "냉장고 수량과 함께 보는 집밥 레시피",
+  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#f4efe8",
   "theme_color": "#f4efe8",
   "lang": "ko",
+  "categories": ["food", "lifestyle"],
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
