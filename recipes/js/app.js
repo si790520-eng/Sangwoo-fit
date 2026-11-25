@@ -88,6 +88,22 @@
   let cat = sessionStorage.getItem("recipes.cat") || "한식";
   if (!CATS.includes(cat)) cat = "한식";
   let q = "";
+  let recOffset = Number(sessionStorage.getItem("recipes.rec.offset") || 0) || 0;
+  let recHigh = sessionStorage.getItem("recipes.rec.high") === "1";
+  let recQuick = sessionStorage.getItem("recipes.rec.quick") === "1";
+  let recCat = sessionStorage.getItem("recipes.rec.cat") || "";
+  const QUICK = [
+    ["계란", "계란", "고기·단백질"],
+    ["양파", "양파", "채소"],
+    ["대파", "파", "채소"],
+    ["김치", "김치", "채소"],
+    ["닭가슴살", "닭가슴살", "고기·단백질"],
+    ["삼겹살", "삼겹살", "고기·단백질"],
+    ["두부", "두부", "채소"],
+    ["감자", "감자", "채소"],
+    ["밥", "밥", "기타"],
+    ["라면", "라면", "기타"]
+  ];
   let deferredPrompt = null;
   window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredPrompt = e; });
 
@@ -135,11 +151,7 @@
   }
   function loadFridge() {
     const raw = localStorage.getItem(FRIDGE_KEY);
-    if (raw == null) {
-      const seeded = SEED.map(([name, c]) => migrateItem({ id: uid(), name, qty: "", unit: "", cat: c }));
-      localStorage.setItem(FRIDGE_KEY, JSON.stringify(seeded));
-      return seeded;
-    }
+    if (raw == null) return [];
     let data = [];
     try { const d = JSON.parse(raw); data = Array.isArray(d) ? d : []; }
     catch { data = []; }
@@ -208,6 +220,139 @@
     return allRecipes().map(r => ({ r, ...tally(r, fridge) })).sort((a, b) =>
       a.missing.length - b.missing.length || b.ratio - a.ratio || b.ownedMain - a.ownedMain || a.r.title.localeCompare(b.r.title, "ko")
     );
+  }
+  function parseProtein(r) {
+    const m = String(r.protein || "").match(/(\d+(?:\.\d+)?)/);
+    return m ? Number(m[1]) : 0;
+  }
+  function parseMinutes(r) {
+    const m = String(r.time || "").match(/(\d+)/);
+    return m ? Number(m[1]) : 9999;
+  }
+  function isSeasoning(ing) {
+    const key = ing.key || ing.name;
+    return !!(Kit && (Kit.isPantry(key) || Kit.isPantry(ing.name)));
+  }
+  function guessCat(name) {
+    if (Kit && Kit.isPantry(name)) return "양념";
+    if (/닭|돼지|소고기|계란|달걀|참치|새우|오징어|고등|동태|안심|삼겹/.test(name)) return "고기·단백질";
+    if (/밥|라면|면|오트|현미|김/.test(name)) return "기타";
+    return "채소";
+  }
+  function hasNamed(fridge, name) {
+    return fridge.some(item => itemAvailable(item) && (namesMatch(item.name, name) || norm(item.name) === norm(name)));
+  }
+  function scoreRecipe(recipe, fridge) {
+    const ings = (recipe.ingredients || []).filter(i => !i.water && !i.optional);
+    let weight = 0;
+    let ownedW = 0;
+    let have = 0;
+    const missing = [];
+    ings.forEach(ing => {
+      const w = isSeasoning(ing) ? 1 : 3;
+      weight += w;
+      if (hasIng(fridge, ing)) { ownedW += w; have += 1; }
+      else missing.push(ing);
+    });
+    return {
+      r: recipe,
+      missing,
+      have,
+      pct: weight ? Math.round((100 * ownedW) / weight) : 100,
+      protein: parseProtein(recipe),
+      minutes: parseMinutes(recipe)
+    };
+  }
+  function recommendPool(fridge) {
+    let list = allRecipes().map(r => scoreRecipe(r, fridge));
+    if (recHigh) list = list.filter(x => x.protein >= 35);
+    if (recQuick) list = list.filter(x => x.minutes <= 15);
+    if (recCat) list = list.filter(x => x.r.cat === recCat);
+    list.sort((a, b) =>
+      Number(b.have > 0) - Number(a.have > 0) ||
+      a.missing.length - b.missing.length ||
+      b.pct - a.pct ||
+      b.protein - a.protein ||
+      a.minutes - b.minutes ||
+      a.r.title.localeCompare(b.r.title, "ko")
+    );
+    return list;
+  }
+  function saveRecState() {
+    sessionStorage.setItem("recipes.rec.offset", String(recOffset));
+    sessionStorage.setItem("recipes.rec.high", recHigh ? "1" : "0");
+    sessionStorage.setItem("recipes.rec.quick", recQuick ? "1" : "0");
+    sessionStorage.setItem("recipes.rec.cat", recCat);
+  }
+  function catalog() {
+    const seen = new Map();
+    const add = (name) => {
+      const key = norm(name);
+      if (!key || key === "물") return;
+      if (!seen.has(key)) seen.set(key, { name: String(name).trim(), cat: guessCat(name) });
+    };
+    allRecipes().forEach(r => (r.ingredients || []).forEach(ing => {
+      if (ing.water) return;
+      add(ing.name);
+      if (ing.key) add(ing.key);
+    }));
+    return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name, "ko"));
+  }
+  function addPresent(name, cat) {
+    const list = loadFridge();
+    const found = list.find(i => namesMatch(i.name, name) || norm(i.name) === norm(name));
+    if (found) {
+      if (!itemAvailable(found)) {
+        found.track = found.track === "amount" && found.qty ? "amount" : "toggle";
+        if (found.track === "toggle") { found.present = true; found.qty = null; }
+        found.depleted = false;
+        if (found.qty === 0) found.qty = null;
+        saveFridge(list);
+      }
+      return false;
+    }
+    list.push({
+      id: uid(), name, cat: cat || guessCat(name), v: 2,
+      track: "toggle", qty: null, unit: Kit.defaultUnit(name),
+      present: true, depleted: false, legacyQty: ""
+    });
+    saveFridge(list);
+    return true;
+  }
+  function dropQuick(name) {
+    const list = loadFridge();
+    const found = list.find(i => namesMatch(i.name, name) || norm(i.name) === norm(name));
+    if (!found) return;
+    if (found.track === "amount" && typeof found.qty === "number" && found.qty > 0) {
+      toast("수량이 적혀 있어서 여기서는 빼지 않았어요");
+      return;
+    }
+    saveFridge(list.filter(i => i.id !== found.id));
+  }
+  function loadExamplePantry() {
+    const list = loadFridge();
+    let n = 0;
+    for (const [name, c] of SEED) {
+      if (!list.some(i => norm(i.name) === norm(name) || namesMatch(i.name, name))) {
+        list.push(migrateItem({ id: uid(), name, qty: "", unit: "", cat: c }));
+        n++;
+      }
+    }
+    saveFridge(list);
+    return n;
+  }
+  function exportPayload() {
+    return { app: "jipbap", v: 1, exportedAt: new Date().toISOString(), fridge: loadFridge(), custom: loadCustom() };
+  }
+  function downloadJson(obj, filename) {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1500);
   }
   function recipeServes(r) {
     const n = Number(r.serves);
@@ -339,24 +484,158 @@
   function bindCards(root) {
     (root || view).querySelectorAll("[data-id]").forEach(b => b.onclick = () => go("#/r/" + b.dataset.id));
   }
+  function missLine(row) {
+    if (!row.missing.length) return "있는 재료 " + row.have + "개 / 부족한 재료 없음";
+    const names = row.missing.slice(0, 4).map(i => i.name).join(", ");
+    const more = row.missing.length > 4 ? " 외 " + (row.missing.length - 4) : "";
+    return "있는 재료 " + row.have + "개 / 부족한 재료: " + names + more;
+  }
+  function recHero(fridge) {
+    const pool = recommendPool(fridge);
+    if (recOffset >= pool.length) recOffset = 0;
+    const page = pool.slice(recOffset, recOffset + 3);
+    const filters = [
+      ["high", "고단백"],
+      ["quick", "15분 이내"],
+      ["한식", "한식"],
+      ["양식", "양식"],
+      ["중식", "중식"],
+      ["일식", "일식"]
+    ];
+    const chips = filters.map(([id, label]) => {
+      const on = id === "high" ? recHigh : id === "quick" ? recQuick : recCat === id;
+      return `<button type="button" class="qchip${on ? " on" : ""}" data-filter="${esc(id)}">${esc(label)}</button>`;
+    }).join("");
+    const cards = page.length ? page.map(row => `<button class="card recipe rec-card" type="button" data-id="${esc(row.r.id)}">
+      <div class="kicker"><span class="chip">${esc(row.r.cat)}</span><span class="pct">${row.pct}% 맞음</span></div>
+      <h2>${esc(row.r.title)}</h2>
+      <p class="match-line">${esc(missLine(row))}</p>
+      <p class="meta">${esc(row.r.time)} · ${esc(row.r.kcal)} · 단백질 ${esc(row.r.protein)} <i class="est">추정치</i></p>
+    </button>`).join("") : `<div class="empty"><p>이 조건에 맞는 요리가 없어요.</p><p class="note">필터를 끄면 다시 골라요.</p></div>`;
+    const more = pool.length > 3 ? `<button class="btn block" type="button" id="reshuffle">다른 추천 보기</button><p class="note" style="text-align:center">${recOffset + 1}–${Math.min(recOffset + 3, pool.length)} / ${pool.length}</p>` : "";
+    const just = sessionStorage.getItem("recipes.onboard.just") === "1";
+    if (just) sessionStorage.removeItem("recipes.onboard.just");
+    return `<section class="rec-hero" aria-label="오늘 뭐 해먹지? 추천 3개">
+      <p class="rec-kicker">${just ? "2 / 2 · 이 재료로 고른 추천" : "냉장고에 있는 재료 기준"}</p>
+      <h2 class="rec-title">오늘 뭐 해먹지? 추천 3개</h2>
+      <p class="note">가진 재료를 쓰는 요리 가운데, 부족한 재료가 없는 것을 먼저 보여요. 개수가 같으면 주요 재료를 양념보다 더 쳐요. 그다음은 단백질이 높고 시간이 짧은 순이에요. 고단백은 단백질 추정치 35g 이상입니다.</p>
+      <div class="filter-row">${chips}</div>
+      ${cards}
+      ${more}
+    </section>`;
+  }
+  function bindRec(fridge) {
+    view.querySelectorAll("[data-filter]").forEach(b => b.onclick = () => {
+      const id = b.dataset.filter;
+      if (id === "high") recHigh = !recHigh;
+      else if (id === "quick") recQuick = !recQuick;
+      else recCat = recCat === id ? "" : id;
+      recOffset = 0;
+      saveRecState();
+      listView();
+    });
+    const next = $("#reshuffle");
+    if (next) next.onclick = () => {
+      const pool = recommendPool(fridge);
+      recOffset = recOffset + 3 >= pool.length ? 0 : recOffset + 3;
+      saveRecState();
+      listView();
+    };
+  }
+  function pickerHtml(selectedNames) {
+    const fridge = loadFridge();
+    const chips = QUICK.map(([label, name]) => {
+      const on = selectedNames ? selectedNames.has(name) : hasNamed(fridge, name);
+      return `<button type="button" class="qchip${on ? " on" : ""}" data-quick="${esc(name)}" data-label="${esc(label)}">${esc(label)}</button>`;
+    }).join("");
+    return `<div class="suggest-wrap">
+      <input class="search" id="qIng" placeholder="재료 검색" autocomplete="off" enterkeyhint="search">
+      <div id="suggest" class="suggest" hidden></div>
+    </div>
+    <div class="filter-row" id="quickChips">${chips}</div>`;
+  }
+  function bindPicker(opts) {
+    const draft = opts.draft || null;
+    const input = $("#qIng");
+    const box = $("#suggest");
+    let composing = false;
+    const renderSuggest = () => {
+      const ql = norm(input.value);
+      if (!ql) { box.hidden = true; box.innerHTML = ""; return; }
+      const hits = catalog().filter(item => norm(item.name).includes(ql)).slice(0, 8);
+      if (!hits.length) { box.hidden = true; box.innerHTML = ""; return; }
+      box.hidden = false;
+      box.innerHTML = hits.map(item => `<button type="button" data-add="${esc(item.name)}" data-cat="${esc(item.cat)}">${esc(item.name)}</button>`).join("");
+      box.querySelectorAll("[data-add]").forEach(b => b.onclick = () => {
+        const name = b.dataset.add;
+        const cat = b.dataset.cat;
+        if (draft) draft.add(name);
+        else addPresent(name, cat);
+        input.value = "";
+        box.hidden = true;
+        opts.onChange();
+      });
+    };
+    input.addEventListener("compositionstart", () => { composing = true; });
+    input.addEventListener("compositionend", () => { composing = false; renderSuggest(); });
+    input.addEventListener("input", () => { if (!composing) renderSuggest(); });
+    view.querySelectorAll("[data-quick]").forEach(b => b.onclick = () => {
+      const name = b.dataset.quick;
+      if (draft) {
+        if (draft.has(name)) draft.delete(name); else draft.add(name);
+      } else if (hasNamed(loadFridge(), name)) dropQuick(name);
+      else addPresent(name, QUICK.find(row => row[1] === name)?.[2] || guessCat(name));
+      opts.onChange();
+    });
+  }
+  function onboardView() {
+    setTitle("오늘 뭐 해먹지?");
+    backBtn.hidden = true;
+    tabOn("list");
+    const draft = new Set();
+    const paint = () => {
+      view.innerHTML = `<section class="rec-hero" id="onboard">
+        <p class="rec-kicker">1 / 2 · 재료 선택</p>
+        <h2 class="rec-title">오늘 뭐 해먹지?</h2>
+        <p class="note">있는 재료만 눌러 주세요. 수량은 비워 두어도 되고, 그러면 있음으로 저장해요. 이 폰에만 남습니다.</p>
+        ${pickerHtml(draft)}
+        <button class="btn primary block" type="button" id="goRec" ${draft.size ? "" : "disabled"}>추천 3개 보기</button>
+        <button class="btn block" type="button" id="loadEx" style="margin-top:8px">예시 재료 불러오기</button>
+      </section>
+      <p class="note" style="text-align:center">우유·버터·치즈가 들어간 레시피는 없어요.</p>`;
+      bindPicker({ draft, onChange: paint });
+      const goBtn = $("#goRec");
+      if (draft.size) goBtn.onclick = () => {
+        draft.forEach(name => addPresent(name, QUICK.find(row => row[1] === name)?.[2] || guessCat(name)));
+        sessionStorage.setItem("recipes.onboard.just", "1");
+        recOffset = 0;
+        saveRecState();
+        listView();
+      };
+      $("#loadEx").onclick = () => {
+        const n = loadExamplePantry();
+        toast(n ? `예시 재료 ${n}개를 넣었어요` : "예시 재료가 이미 있어요");
+        sessionStorage.setItem("recipes.onboard.just", "1");
+        listView();
+      };
+    };
+    paint();
+  }
   function listView() {
+    if (!loadFridge().length) return onboardView();
     setTitle("레시피");
     backBtn.hidden = true;
     tabOn("list");
     const fridge = loadFridge();
     const counts = Object.fromEntries(CATS.map(c => [c, allRecipes().filter(r => r.cat === c).length]));
-    const intro = localStorage.getItem(INTRO_KEY) ? "" : `<div class="card" id="intro">
-      <p style="margin:0 0 8px"><b>상우님 퇴근 후 집밥</b></p>
-      <p class="note" style="margin:0 0 10px">27세 · 벌크 한 끼는 밥 포함 대략 600–800kcal, 단백질 35–50g을 봐요. 하루는 2,400–2,500kcal, 단백질 140–160g. 우유·버터·치즈는 레시피에 넣지 않았어요. 요리 완료를 누르면 냉장고 수량이 줄어요. 칼로리·단백질은 추정치예요.</p>
-      <button class="btn" type="button" id="hideIntro">안내 닫기</button>
-    </div>`;
     view.innerHTML = `
+      ${recHero(fridge)}
       <input class="search" id="q" placeholder="${esc(cat)}에서 검색" value="${esc(q)}" enterkeyhint="search" autocomplete="off">
       <div class="tabs" role="tablist">${CATS.map(c => `<button class="tab${c === cat ? " on" : ""}" type="button" data-cat="${esc(c)}" role="tab" aria-selected="${c === cat}">${esc(c)}<small>${counts[c]}</small></button>`).join("")}</div>
-      ${intro}
       <div id="results">${listHtml(filteredRecipes(), fridge)}</div>
       <button class="btn block" type="button" id="addBtn" style="margin-top:6px">+ 내 레시피 추가</button>
-      <p class="note" style="text-align:center;margin-top:12px">기록은 이 폰에만 저장돼요. 가이드에서 썰기·불·계량을 볼 수 있어요.</p>`;
+      <p class="note" style="text-align:center;margin-top:12px">기록은 이 폰에만 저장돼요. 설정에서 옮기거나 지울 수 있어요.</p>`;
+    bindRec(fridge);
     const box = $("#q");
     let composing = false;
     box.addEventListener("compositionstart", () => { composing = true; });
@@ -560,7 +839,11 @@
     const units = Kit.UNITS.map(u => `<option>${esc(u)}</option>`).join("");
     view.innerHTML = `
       ${undo ? `<div class="card"><p style="margin:0 0 8px"><b>마지막 요리 완료</b></p><p class="note" style="margin:0 0 8px">${esc(undo.title)} ${esc(undo.servings)}인분을 빼기 전으로 돌려요. 그 뒤에 고친 수량도 같이 돌아가요.</p><button class="btn block" type="button" id="undoBtn">실행 취소</button></div>` : ""}
-      <div class="card"><p style="margin:0 0 8px"><b>재료 추가</b></p>
+      <div class="card"><p style="margin:0 0 8px"><b>빨리 넣기</b></p>
+        <p class="note" style="margin:0 0 8px">누르면 있음으로 저장해요. 수량은 아래 칸에서 적어도 됩니다.</p>
+        ${pickerHtml(null)}
+      </div>
+      <div class="card"><p style="margin:0 0 8px"><b>수량까지 적기</b></p>
         <form id="addF">
           <div class="field"><label for="fn">이름</label><input id="fn" name="name" required placeholder="예: 닭가슴살" maxlength="40"></div>
           <div class="row">
@@ -575,8 +858,10 @@
       <div class="tip" style="margin-bottom:12px">간장·설탕 같은 양념은 있음/없음만 두거나, g·ml로 적으면 요리 완료 때 빠져요. 수량을 비워 두면 있는 것으로만 보고 숫자는 빼지 않아요. 0이 되면 다 떨어짐으로 남아요.</div>
       ${groups || `<div class="empty">냉장고가 비었어요.</div>`}
       <button class="btn block" type="button" id="clearEmpty" style="margin-top:8px">다 떨어진 항목 치우기</button>
-      <button class="btn block" type="button" id="reseed" style="margin-top:8px">기본 재료 다시 채우기</button>
-      <p class="note" style="text-align:center">없는 이름만 추가해요. 지금 수량은 그대로예요.</p>`;
+      <button class="btn block" type="button" id="reseed" style="margin-top:8px">예시 재료 불러오기</button>
+      <button class="btn block" type="button" id="settingsBtn" style="margin-top:8px">설정 · 데이터 옮기기</button>
+      <p class="note" style="text-align:center">예시 재료는 없는 이름만 더해요. 지금 수량은 그대로예요.</p>`;
+    bindPicker({ onChange: fridgeView });
     const nameBox = $("#fn");
     nameBox.addEventListener("change", () => { if (Kit.isPantry(nameBox.value.trim())) $("#ft").checked = true; });
     $("#addF").onsubmit = e => {
@@ -613,18 +898,11 @@
       fridgeView();
     };
     $("#reseed").onclick = () => {
-      const cur = loadFridge();
-      let n = 0;
-      for (const [name, c] of SEED) {
-        if (!cur.some(i => norm(i.name) === norm(name))) {
-          cur.push(migrateItem({ id: uid(), name, qty: "", unit: "", cat: c }));
-          n++;
-        }
-      }
-      saveFridge(cur);
-      toast(n ? `${n}개를 채웠어요` : "기본 재료가 이미 있어요");
+      const n = loadExamplePantry();
+      toast(n ? `예시 재료 ${n}개를 넣었어요` : "예시 재료가 이미 있어요");
       fridgeView();
     };
+    $("#settingsBtn").onclick = () => go("#/settings");
   }
 
   function openFridgeSheet(id) {
@@ -702,6 +980,7 @@
       <a class="card guide-link" href="#/cuts"><b>기본기 · 썰기</b><p class="note" style="margin:6px 0 0">채썰기, 깍둑, 다지기, 어슷, 반달, 송송, 편, 나박, 한입. cm와 손가락 기준.</p></a>
       <a class="card guide-link" href="#/heat"><b>불 세기</b><p class="note" style="margin:6px 0 0">약불부터 강불. 인덕션 1–9단, 가스 불꽃이 팬에 닿는 높이.</p></a>
       <a class="card guide-link" href="#/measure"><b>계량</b><p class="note" style="margin:6px 0 0">계량스푼 15ml와 밥숟가락 10–12ml, 종이컵, 소주잔.</p></a>
+      <a class="card guide-link" href="#/settings"><b>설정 · 내 데이터</b><p class="note" style="margin:6px 0 0">냉장고를 JSON으로 옮기거나, 이 폰의 기록을 지워요.</p></a>
       <div class="card"><b>하루 먹는 양</b><p class="note">벌크 기준 하루 2,400–2,500kcal, 단백질 140–160g. 유제품은 넣지 않아요. 고단백·밀프렙의 브로콜리 닭 도시락 한 개가 단백질 약 50g대예요.</p></div>
       <div class="card"><b>앱으로 설치</b><p class="note">인터넷이 없어도 한 번 연 화면은 다시 열려요. 스토어 앱으로 가기 전의 설치예요.</p>
         <button class="btn block" type="button" id="installBtn">홈 화면에 추가</button>
@@ -971,6 +1250,77 @@
     paint();
   }
 
+  function confirmSheet(title, body, yesLabel, onYes) {
+    const sheet = document.createElement("div");
+    sheet.className = "sheet";
+    sheet.innerHTML = `<div class="panel" role="dialog" aria-modal="true">
+      <h2 class="page-h">${esc(title)}</h2>
+      <p>${body}</p>
+      <button class="danger block" type="button" id="yesDo">${esc(yesLabel)}</button>
+      <button class="btn block" type="button" id="noDo" style="margin-top:8px">취소</button>
+    </div>`;
+    document.body.appendChild(sheet);
+    const close = () => sheet.remove();
+    sheet.addEventListener("click", e => { if (e.target === sheet) close(); });
+    $("#noDo", sheet).onclick = close;
+    $("#yesDo", sheet).onclick = () => { close(); onYes(); };
+  }
+  function settingsView() {
+    setTitle("설정");
+    backBtn.hidden = false;
+    tabOn("guide");
+    const n = loadFridge().length;
+    const c = loadCustom().length;
+    view.innerHTML = `
+      <div class="card"><p style="margin:0 0 8px"><b>이 폰에만 저장</b></p>
+        <p class="note" style="margin:0">계정이나 서버는 없어요. 냉장고 ${n}개, 내가 추가한 레시피 ${c}개입니다.</p>
+      </div>
+      <div class="card"><p style="margin:0 0 8px"><b>내 데이터 내보내기/가져오기 (JSON)</b></p>
+        <p class="note">다른 폰으로 옮길 때 파일을 저장했다가 가져오세요. 가져오기는 이 폰의 냉장고와 내 레시피를 파일 내용으로 바꿉니다.</p>
+        <button class="btn primary block" type="button" id="exp">내보내기</button>
+        <input id="impFile" type="file" accept="application/json,.json" hidden>
+        <button class="btn block" type="button" id="imp" style="margin-top:8px">가져오기</button>
+      </div>
+      <div class="card"><p style="margin:0 0 8px"><b>초기화</b></p>
+        <p class="note">냉장고와 내가 추가한 레시피를 지워요. 기본 레시피 86개는 그대로입니다.</p>
+        <button class="danger block" type="button" id="wipe">초기화</button>
+      </div>`;
+    $("#exp").onclick = () => {
+      downloadJson(exportPayload(), "jipbap-backup.json");
+      toast("백업 파일을 저장했어요");
+    };
+    $("#imp").onclick = () => $("#impFile").click();
+    $("#impFile").onchange = () => {
+      const file = $("#impFile").files && $("#impFile").files[0];
+      $("#impFile").value = "";
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        let data;
+        try { data = JSON.parse(String(reader.result || "")); }
+        catch { toast("JSON 파일이 아니에요"); return; }
+        if (!data || !Array.isArray(data.fridge)) { toast("냉장고 목록이 없는 파일이에요"); return; }
+        confirmSheet("가져오기", "이 폰의 냉장고와 내가 추가한 레시피를 파일 내용으로 바꿀까요?", "바꾸기", () => {
+          const fridge = data.fridge.map(migrateItem).filter(item => item && item.name);
+          saveFridge(fridge);
+          if (Array.isArray(data.custom)) saveCustom(data.custom.filter(r => r && r.id && r.title && Array.isArray(r.ingredients)));
+          clearUndo();
+          toast("가져왔어요");
+          settingsView();
+        });
+      };
+      reader.readAsText(file);
+    };
+    $("#wipe").onclick = () => {
+      confirmSheet("초기화", "냉장고와 내가 추가한 레시피를 지울까요? 지운 뒤에는 재료를 다시 고르게 됩니다.", "지우기", () => {
+        localStorage.removeItem(FRIDGE_KEY);
+        saveCustom([]);
+        clearUndo();
+        toast("비웠어요");
+        go("#/");
+      });
+    };
+  }
   function route() {
     const h = location.hash || "#/";
     const parts = h.replace(/^#\/?/, "").split("/").filter(Boolean);
@@ -978,6 +1328,7 @@
     if (head === "now") return nowView();
     if (head === "fridge") return fridgeView();
     if (head === "guide") return guideView();
+    if (head === "settings") return settingsView();
     if (head === "cuts") return parts[1] ? cutDetail(decodeURIComponent(parts[1])) : cutsView();
     if (head === "heat") return heatView();
     if (head === "measure") return measureView();
