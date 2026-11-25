@@ -1319,6 +1319,10 @@ function renderSettings() {
   const sets = Object.values(db.workouts).flat().reduce((a, it) => a + it.sets.filter(s => s.r > 0).length, 0);
   app.innerHTML = `${profileCardHtml()}
     ${gymCardHtml()}
+    <div class="card"><h3 style="margin:0 0 6px">집밥 레시피</h3>
+      <p class="muted small" style="margin:0 0 10px">냉장고 수량, 불 세기, 썰기, 계량은 집밥에서 봐요. 운동 기록은 그대로 핏로그에 있어요.</p>
+      <a class="btn block" href="recipes/" style="text-decoration:none">집밥 열기</a>
+    </div>
     <div class="card"><h3 style="margin:0 0 6px">💾 데이터 백업</h3>
       <p class="muted small" style="margin:0 0 10px">기록은 이 폰의 브라우저에만 저장돼요. 브라우저 데이터를 지우거나 폰을 바꾸면 사라질 수 있으니 가끔 백업해 주세요.<br>현재: 운동 ${n}일 · ${sets}세트 · 식단 ${nm}일 · 체중 ${nw}회${db.meta.lastBackup ? ` · 마지막 백업 ${labelD(db.meta.lastBackup)}` : ' · 아직 백업 안 함'}</p>
       <button class="btn primary block" id="exp">⬇️ 백업 파일 저장 (JSON)</button>
