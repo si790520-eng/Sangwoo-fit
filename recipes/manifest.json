@@ -1,6 +1,6 @@
 {
   "id": "./",
-  "name": "상우 집밥",
+  "name": "집밥",
   "short_name": "집밥",
   "description": "냉장고 수량과 함께 보는 집밥 레시피",
   "start_url": "./index.html",
