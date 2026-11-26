@@ -18,7 +18,11 @@ for r in csv.DictReader(open(f'{fooddb.D}/mfds_processed.csv', encoding='utf-8-s
 def Rr(name): return ('R', name)
 def Uu(fid): return ('U', str(fid))
 def Dd(name, kind=None): return ('D', name, kind)
-def Pp(pat, excl=None): return ('P', pat, excl)
+def Pp(pat, excl=None, kmin=None, kmax=None):
+    opts = {}
+    if kmin is not None: opts['kmin'] = kmin
+    if kmax is not None: opts['kmax'] = kmax
+    return ('P', pat, excl, opts) if opts else ('P', pat, excl)
 
 ORIGIN = {'농진청': '농진청 분석', '수': '국립수산과학원', 'USDA': 'USDA 인용', 'JAPAN': '일본식품성분표 인용', '식약': '식약처', '국': '국립보건원', '축산연': '축산과학원', '대푯값': '대푯값'}
 DPRI = ['외식(분석함량)', '외식(재료량 기반 산출함량)', '가정식(분석 함량)', '산업체급식(재료량 기반 산출 함량)']
@@ -49,11 +53,33 @@ def resolve(ref):
         return dict(k=f['kcal'], p=f['p'], c=f['c'], f=f['f'], src='식약처', srcName=f"{f['name']} ({f['kind']})", srcNote=f"식약처 식품영양성분DB 음식 {f['code']}", unit=unit, serveG=serve)
     if kind == 'P':
         pat, excl = re.compile(ref[1]), re.compile(ref[2]) if ref[2] else None
+        opts = ref[3] if len(ref) > 3 and isinstance(ref[3], dict) else {}
         rows = [r for r in PROD if pat.search(r[0]) and not (excl and excl.search(r[0])) and r[1] > 0]
-        assert len(rows) >= 3, ('제품 부족', ref[1], len(rows))
+        if opts.get('kmin') is not None: rows = [r for r in rows if r[1] >= opts['kmin']]
+        if opts.get('kmax') is not None: rows = [r for r in rows if r[1] <= opts['kmax']]
+        assert len(rows) >= 3, ('제품 부족', ref[1], len(rows), opts)
         med = lambda i: statistics.median(r[i] for r in rows)
         return dict(k=med(1), p=med(2), c=med(3), f=med(4), src='식약처 제품', srcName=f'시판 제품 {len(rows)}개 중앙값', srcNote=f'식약처 통합식품영양성분DB(가공식품) 제품 {len(rows)}개의 100g당 중앙값', unit='g')
     raise ValueError(ref)
+
+def enrich_por(por):
+    """1개·1잔·1인분 등 앞에 0.5/1.5/2 배수를 덧붙여요."""
+    if not por: return por
+    out = [list(p) for p in por]
+    head = re.match(r'^(1인분|1개|1잔|1조각|1봉|1공기|1캔|1접시|1줄|1팩|1장|1컵|1병)', out[0][0].replace('≈','').strip())
+    if not head: return out
+    unit = head.group(1)[1:]  # 인분/개/잔...
+    g0 = out[0][1]
+    approx = '≈' in out[0][0]
+    have = {re.sub(r'[≈()].*$','',p[0]).strip() for p in out}
+    extra = []
+    for mul, lab in ((0.5, '0.5'+unit), (1.5, '1.5'+unit), (2, '2'+unit)):
+        if lab in have: continue
+        g = g0 * mul
+        g = int(g) if abs(g - round(g)) < 1e-9 else round(g, 1)
+        extra.append([lab + ('≈' if approx else ''), g])
+    # keep the 1x first (default), then 0.5 / 1.5 / 2
+    return out[:1] + extra + out[1:]
 
 C = {}
 ERR = []
@@ -64,6 +90,7 @@ def F(name, cat, ref, portions=(), state='', note='', est=False, aka=''):
     por = [list(p) for p in portions]
     if v.get('serveG') and not any(p[0].startswith('1인분') for p in por):
         por.insert(0, [f"1인분({v['serveG']:g}{v['unit']})", v['serveG']])
+    por = enrich_por(por)
     assert name not in C, ('중복', name)
     C[name] = dict(id='v2:' + name, name=name, cat=cat, k=round(v['k'], 1), p=round(v['p'], 2), c=round(v['c'], 2), f=round(v['f'], 2), unit=v['unit'],
                    src=v['src'], srcName=v['srcName'], srcNote=v['srcNote'], state=state, est=est or v['src'] == '식약처',
@@ -71,6 +98,7 @@ def F(name, cat, ref, portions=(), state='', note='', est=False, aka=''):
 
 DISH_CATS = {'국·찌개', '한식 요리', '분식', '외식·패스트푸드'}
 exec(open(os.path.join(os.path.dirname(__file__), 'food_spec.py'), encoding='utf-8').read())
+exec(open(os.path.join(os.path.dirname(__file__), 'food_spec_expand.py'), encoding='utf-8').read())
 
 if ERR:
     for e in ERR:
@@ -83,7 +111,7 @@ if ERR:
             print('   후보:', sorted({f['name'] for f in M if f['name'].startswith(e[1].split('_')[0]) and f['kind'] in DPRI})[:12])
     sys.exit(1)
 out = list(C.values())
-ORDER = ['닭·오리', '계란', '고기', '생선·해산물', '건어물·해조류', '콩·두부', '유제품', '밥·곡류', '빵·떡·면', '채소', '과일', '견과·씨앗', '보충제',
+ORDER = ['디저트·빵', '카페·음료', '닭·오리', '계란', '고기', '생선·해산물', '건어물·해조류', '콩·두부', '유제품', '밥·곡류', '빵·떡·면', '채소', '과일', '견과·씨앗', '보충제',
          '국·찌개', '한식 요리', '반찬', '분식', '외식·패스트푸드', '편의점·가공', '간식', '음료', '주류', '기름·양념']
 assert {f['cat'] for f in out} <= set(ORDER), {f['cat'] for f in out} - set(ORDER)
 cats = [c for c in ORDER if any(f['cat'] == c for f in out)]

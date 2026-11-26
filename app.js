@@ -776,6 +776,7 @@ function renderLog() {
     <div id="todayDiet"></div>
     <h3 class="sec-h">🏋️ 운동</h3>
     ${routineTodayHtml()}
+    <div id="ptMount">${window.PT_COACH ? window.PT_COACH.cardHtml(curDate) : ''}</div>
     <div id="daySum"></div>
     <div id="exList">${items.map((it, i) => exCard(it, i)).join('')}</div>
     ${items.length ? '' : `<div class="empty" style="padding:18px"><p style="margin:0">아직 운동 기록이 없어요. 아래 버튼으로 추가해 보세요!</p></div>`}
@@ -803,6 +804,7 @@ function renderLog() {
   bindReviewBtns();
   bindRoutineToday();
   bindCards();
+  if (window.PT_COACH) window.PT_COACH.bindCard(app, id => addExercise(id));
 }
 function renderDaySum() {
   const el = $('#daySum'); if (!el) return;
@@ -1244,6 +1246,7 @@ function guideHtml(ex) {
     <div class="card"><h3 style="margin-top:0">📋 권장 세트/횟수</h3>
       <div class="rec"><div><span class="muted small">세트</span><b>${esc(ex.rec.sets)}</b></div><div><span class="muted small">${ex.type === 'time' || ex.type === 'cardio' ? '시간' : '횟수'}</span><b>${esc(recReps(ex))}</b></div><div><span class="muted small">휴식</span><b>${esc(ex.rec.rest)}</b></div></div>
       <p class="muted small" style="margin:8px 0 0">${incText(ex)}</p></div>
+    ${window.PT_COACH ? window.PT_COACH.intensityHtml(ex) : ''}
     <div class="card"><h3 style="margin-top:0">✅ 동작 순서</h3><ol>${ex.steps.map(t => `<li>${esc(t)}</li>`).join('')}</ol></div>
     <div class="card"><h3 style="margin-top:0">🚫 흔한 실수</h3><ul>${ex.mistakes.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>
     ${safety}
@@ -1319,10 +1322,6 @@ function renderSettings() {
   const sets = Object.values(db.workouts).flat().reduce((a, it) => a + it.sets.filter(s => s.r > 0).length, 0);
   app.innerHTML = `${profileCardHtml()}
     ${gymCardHtml()}
-    <div class="card"><h3 style="margin:0 0 6px">집밥 레시피</h3>
-      <p class="muted small" style="margin:0 0 10px">냉장고 수량, 불 세기, 썰기, 계량은 집밥에서 봐요. 운동 기록은 그대로 핏로그에 있어요.</p>
-      <a class="btn block" href="recipes/" style="text-decoration:none">집밥 열기</a>
-    </div>
     <div class="card"><h3 style="margin:0 0 6px">💾 데이터 백업</h3>
       <p class="muted small" style="margin:0 0 10px">기록은 이 폰의 브라우저에만 저장돼요. 브라우저 데이터를 지우거나 폰을 바꾸면 사라질 수 있으니 가끔 백업해 주세요.<br>현재: 운동 ${n}일 · ${sets}세트 · 식단 ${nm}일 · 체중 ${nw}회${db.meta.lastBackup ? ` · 마지막 백업 ${labelD(db.meta.lastBackup)}` : ' · 아직 백업 안 함'}</p>
       <button class="btn primary block" id="exp">⬇️ 백업 파일 저장 (JSON)</button>
@@ -1341,7 +1340,7 @@ function renderSettings() {
       <p class="small" style="margin:0">아이폰: 사파리 하단 <b>공유</b> → <b>홈 화면에 추가</b><br>안드로이드: 크롬 메뉴(⋮) → <b>홈 화면에 추가</b> 또는 <b>앱 설치</b><br><span class="muted">한 번 열고 나면 인터넷 없이도 동작해요.</span></p></div>
     <button class="btn block" id="evBtn" style="margin-bottom:12px">📚 계산·음식 데이터 근거 (논문·출처)</button>
     <button class="btn danger block" id="wipe">전체 기록 삭제</button>
-    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v15 · 상우님 전용 💪</p>`;
+    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v16 · 상우님 전용 💪</p>`;
   $('#evBtn').onclick = () => go('#/evidence');
   const fname = () => `fitlog-backup-${todayStr()}.json`;
   const markBackup = () => { db.meta.lastBackup = todayStr(); save(); };
@@ -1452,7 +1451,8 @@ function renderEvidence() {
       <p class="small"><a href="https://strengthlevel.com/strength-standards" target="_blank" rel="noopener">strengthlevel.com/strength-standards</a><br><a href="https://exrx.net/Testing/WeightLifting/StrengthStandards" target="_blank" rel="noopener">exrx.net/Testing/WeightLifting/StrengthStandards</a></p></div>
     <div class="card ev"><h3>🖼️ 자세 그림</h3><p class="small">자세 그림은 앱이 직접 그린 단순화한 그림이에요(인터넷 없이 동작). 관절 각도·움직임 경로는 일반적인 동작 설명을 바탕으로 했고, 사람마다 체형에 따라 바른 자세가 조금씩 달라요. 처음 하는 동작은 트레이너에게 확인받는 걸 추천해요.</p></div>
     <div class="card ev"><h3>📋 추천 루틴은 어떻게 짰나요?</h3>
-      <p class="small"><b>주간 세트</b>: 주당 세트 수와 근육 증가의 관계를 본 메타분석에서, 세트가 많을수록 근육이 더 늘어나는 용량-반응 관계가 나타났고 근육마다 <b>주 10세트 이상</b>이 그보다 적은 경우보다 효과가 컸어요${ref('vol')}. 앱은 부위마다 <b>주 10~20세트</b>를 기본 범위로 써요 — 20세트 위쪽은 이 연구의 값이 아니라 회복을 고려한 일반적인 코칭 상한이에요.</p>
+      <p class="small"><b>주간 세트</b>: 주당 세트 수와 근육 증가의 관계를 본 메타분석에서, 세트가 많을수록 근육이 더 늘어나는 용량-반응 관계가 나타났고 근육마다 <b>주 10세트 이상</b>이 그보다 적은 경우보다 효과가 컸어요${ref('vol')}. 루틴 화면은 부위마다 <b>주 10~20세트</b>를 참고 범위로 보여 줘요. PT 코치는 대근육(가슴·등·하체) <b>주 10~18세트</b>, 소근육(어깨·팔·코어) <b>주 8~14세트</b>, 한 세션 부위당 <b>4~10세트</b>로 조금 더 타이트하게 안내해요 — 18·14·10 위쪽은 이 연구의 값이 아니라 회복을 고려한 일반적인 코칭 상한이에요.</p>
+      <p class="small"><b>강도(RIR 1~2)</b>: 실패 직전 1~2회를 남기는 강도(RPE 8~9)는 관절 부담을 줄이면서도 근성장 자극을 유지하는 일반적인 코칭 방법이에요. 더블 프로그레션(횟수 상단을 채운 뒤에만 무게를 올림)도 같은 맥락의 진행 방법이에요. 통증·찌릿함은 즉시 중단하고 전문가와 상담하세요. 의학적 진단이 아니에요.</p>
       <p class="small"><b>빈도</b>: 같은 양을 기준으로 부위마다 <b>주 2번 이상</b> 훈련하는 쪽이 주 1번보다 근비대에 유리했어요${ref('freq')}. 그래서 3·4·5회 루틴 모두 큰 부위를 주 2번씩 넣었어요.</p>
       <p class="small"><b>세트 세는 법</b>: 그 부위가 주동근이면 1세트, 보조근이면 0.5세트로 세요. 0.5는 널리 쓰이는 어림 규칙이고 정확한 값은 아니에요. 반복 범위·휴식은 위의 더블 프로그레션 규칙과 같아요(다관절 머신 1분 30초~2분, 고립 1~1분 30초).</p></div>
     <div class="card ev"><h3>🏷️ 짐80·파나타 기구 목록 출처</h3>
@@ -1714,7 +1714,7 @@ function openFoodPicker(meal) {
   let cat = foodCat || (recentFoods().length ? '최근' : '전체');
   const chips = ['최근', '즐겨찾기', '내 음식', '전체', ...window.FOOD_CATS];
   openSheet(`<h2>${meal}에 음식 추가</h2>
-    <input class="search" id="fq" placeholder="음식 검색 (예: 몬스터와퍼, 감튀, 닭가슴살)" autocomplete="off">
+    <input class="search" id="fq" placeholder="음식 검색 (예: 에그타르트, 휘낭시에, 아메리카노)" autocomplete="off">
     <div class="chips" id="fc"></div><div id="fl"></div>
     <button class="btn block" id="fcustom" style="margin-top:6px">✏️ 목록에 없어요 · 직접 입력</button>`, body => {
     let shown = [];
@@ -1767,7 +1767,8 @@ function openAmountG(f, e, { meal, editIndex }) {
     <div class="field"><label>분량 고르기</label><div class="chips wrap" id="ap">
       ${por.map((p, i) => `<button class="chip" data-p="${i}">${esc(porLbl(f, p))}</button>`).join('')}
       ${f.each ? '' : `<button class="chip" data-p="g100">100${u}</button>`}</div></div>
-    <div class="field" id="anf"><label>개수</label>
+    <div class="field" id="anf"><label>개수 (0.5 / 1 / 1.5 / 2배)</label>
+      <div class="chips wrap" id="amul">${[0.5,1,1.5,2].map(n => `<button class="chip" data-n="${n}">${n}배</button>`).join('')}</div>
       <div class="stepper"><button class="btn" data-d="-0.5">−</button><input id="an" type="number" inputmode="decimal" step="0.5" min="0.25"><button class="btn" data-d="0.5">＋</button></div></div>
     ${f.each ? '' : `<div class="field"><label>또는 정확한 양 (${u})</label><div class="row"><input id="ag" class="num-in" type="number" inputmode="decimal" min="0" step="1" placeholder="예: 150"><span class="muted">${u}</span></div></div>`}
     <div class="card" id="atot"></div>
@@ -1781,6 +1782,7 @@ function openAmountG(f, e, { meal, editIndex }) {
       body.querySelectorAll('#ap .chip').forEach(c => c.classList.toggle('on', a.p != null && String(c.dataset.p) === String(a.p)));
       $('#anf', body).style.display = a.p != null ? '' : 'none';
       if (a.p != null) $('#an', body).value = a.n;
+      body.querySelectorAll('#amul .chip').forEach(c => c.classList.toggle('on', a.p != null && Number(c.dataset.n) === Number(a.n)));
       const ag = $('#ag', body);
       if (ag && fromInput !== 'g') ag.value = g ? r1(g) : '';
       $('#atot', body).innerHTML = `<div class="small muted" style="margin-bottom:6px">${g ? `총 <b id="agt">${fmt(g)}${u}</b>${a.p != null ? ` = ${esc(porLbl(f, por[a.p]))} × ${fmt(a.n)}` : ''}` : '양을 골라 주세요'}</div>
@@ -1789,6 +1791,8 @@ function openAmountG(f, e, { meal, editIndex }) {
     };
     draw();
     $('#ap', body).onclick = ev => { const c = ev.target.closest('[data-p]'); if (!c) return; if (c.dataset.p === 'g100') a = { g: 100 }; else a = { p: +c.dataset.p, n: a.p === +c.dataset.p ? a.n : 1 }; draw(); };
+    const mul = $('#amul', body);
+    if (mul) mul.onclick = ev => { const c = ev.target.closest('[data-n]'); if (!c) return; a.n = +c.dataset.n; draw(); };
     body.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { a.n = Math.max(0.25, Math.round((a.n + +b.dataset.d) * 4) / 4); draw(); });
     $('#an', body).addEventListener('input', ev => { const v = Number(ev.target.value); if (v > 0) { a.n = v; draw('n'); $('#an', body).value = ev.target.value; } });
     const agIn = $('#ag', body); if (agIn) agIn.addEventListener('input', ev => { const v = Number(ev.target.value); if (v > 0) { a = { g: v }; draw('g'); } });
@@ -2392,9 +2396,13 @@ function renderGym() {
 }
 
 // ───────── 시작
+if (window.PT_COACH) window.PT_COACH.attach({
+  get db() { return db; },
+  exById, metrics, allEx, brandRank, addDays, esc, fmt, r1
+});
 route();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
-window.__fitlog = { get db() { return db; }, overlays: () => ovStack.map(o => o.type), metrics, sessionsFor, isPlateau, plateauInfo, progRange, minInc, pct: (id, m) => pctValue(exById(id), m), nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods, filterEx, exById, keyMetrics, weeklySets, buildTpl, RT_TPL, pickSlot, swapCands, targetSets, normRoutine, myBrands, myGym, rtVisible, GYMS: window.GYMS, buildReview, reviewFoodOf, pickDietFixes, loggedWeeklySets, pickReviewEx, reviewStall, DAIRY_RE };
+window.__fitlog = { get db() { return db; }, overlays: () => ovStack.map(o => o.type), metrics, sessionsFor, isPlateau, plateauInfo, progRange, minInc, pct: (id, m) => pctValue(exById(id), m), nextTarget, calcTargets, dayTotals, parsePaste, foodById, macrosFor, searchFoods, filterEx, exById, keyMetrics, weeklySets, buildTpl, RT_TPL, pickSlot, swapCands, targetSets, normRoutine, myBrands, myGym, rtVisible, GYMS: window.GYMS, buildReview, reviewFoodOf, pickDietFixes, loggedWeeklySets, pickReviewEx, reviewStall, DAIRY_RE, PT: window.PT_COACH };
 })();
