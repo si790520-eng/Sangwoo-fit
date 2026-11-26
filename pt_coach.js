@@ -156,6 +156,35 @@
     else if (e.load === 'machine' || e.load === 'plate') s -= 10;
     return s;
   }
+  const HIGH_EFF = [
+    { id: 'incline_db', group: '가슴', pat: 'chest_inc', badge: '장근 길이', ref: 'wolf23', why: '벤치에 등을 고정한 채 윗가슴이 더 늘어난 위치에서 눌러, 장근 길이 구간 장력을 유지하기 좋아요.' },
+    { id: 'cable_cross_low', group: '가슴', pat: 'chest_fly', badge: '고장력', ref: 'wolf23', why: '아래에서 위로 올리는 크로스오버는 시작부터 케이블 장력이 걸려, 가슴을 크게 늘린 채로 모을 수 있어요.' },
+    { id: 'cable_cross_high', group: '가슴', pat: 'chest_fly', badge: '고장력', ref: 'wolf23', why: '위에서 아래로 모으는 크로스오버는 가슴 하부까지 장력이 유지되는 고립 동작이에요.' },
+    { id: 'dips', group: '가슴', pat: 'chest_flat', badge: '장근 길이', ref: 'wolf23', why: '몸을 깊이 내려 가슴을 크게 늘린 상태에서 밀어 올리는 복합 동작이에요. 어깨가 아프면 깊이를 줄이거나 머신으로 바꾸세요.' },
+    { id: 'chest_press', group: '가슴', pat: 'chest_flat', badge: '안정성', why: '궤도가 고정돼 실패 직전까지 안전하게 장력을 유지하기 좋아요. 프리웨이트보다 허리 부담이 적어요.' },
+    { id: 'chest_supported_row', group: '등', pat: 'back_h', badge: '안정성', why: '가슴을 패드에 대고 당겨 허리 피로 없이 등 근육에만 집중할 수 있어요.' },
+    { id: 'db_row', group: '등', pat: 'back_h', badge: '편측 집중', why: '한쪽씩 당겨 좌우 차이를 줄이고, 광배와 중부 승모를 깊게 수축하기 좋아요.' },
+    { id: 'straight_arm_pulldown', group: '등', pat: 'back_v', badge: '광배 고립', why: '팔꿈치를 거의 펴고 내려 광배를 크게 늘렸다가 모으는 케이블 풀오버 패턴이에요. 이두 개입을 줄여요.' },
+    { id: 'close_pulldown', group: '등', pat: 'back_v', badge: '광배 집중', why: '뉴트럴(클로즈) 그립 랫풀다운은 손목·어깨 부담을 줄이면서 광배 하부 자극을 주기 좋아요.' },
+    { id: 'circular_row', group: '등', pat: 'back_h', badge: '호 궤도', why: '손이 큰 호를 그리며 당겨 허리 부담을 줄이고 광배·중부 승모에 장력을 유지하기 좋아요.' },
+    { id: 'bss', group: '하체', pat: 'leg_quad', badge: '편측·안정', why: '한 다리로 깊게 내려가 대퇴사두·둔근을 길게 늘린 위치에서 밀어 올려요. 양발 스쿼트와 자극이 달라요.' },
+    { id: 'rdl', group: '하체', pat: 'leg_post', badge: '장근 길이', ref: 'wolf23', why: '무릎을 조금만 굽힌 채 엉덩이를 뒤로 보내, 햄스트링과 둔근이 늘어난 구간에서 힘을 내요.' },
+    { id: 'seated_leg_curl', group: '하체', pat: 'leg_post', badge: 'Maeo 2021', ref: 'maeo21', why: '앉은 자세에서 고관절이 굽혀져 햄스트링이 더 늘어난 상태로 수축해, 엎드린(라잉) 레그컬보다 근비대가 더 컸어요 (전체 햄스트링 +14% vs +9%).' },
+    { id: 'leg_ext', group: '하체', pat: 'leg_quad', badge: '장근 길이', ref: 'wolf23', why: '무릎을 굽힌 시작 구간에서 대퇴사두가 길게 늘어난 채로 펴는 고립 동작이에요. 스쿼트와 자극 부위가 보완돼요.' },
+    { id: 'hip_thrust', group: '하체', pat: 'leg_post', badge: '둔근 집중', why: '허리보다 엉덩이에 힘을 모으기 쉬운 자세라, 스쿼트만으로는 부족한 둔근 자극을 채우기 좋아요.' },
+    { id: 'cable_lateral', group: '어깨', pat: 'sh_side', badge: '고장력', why: '케이블은 팔이 내린 시작 구간부터 장력이 걸려, 덤벨 레터럴보다 약한 지점이 적어요.' },
+    { id: 'rear_delt', group: '어깨', pat: 'sh_rear', badge: '후면 고립', why: '리버스 펙덱은 궤도가 고정돼 허리 흔들림 없이 후면 삼각근만 고립하기 좋아요.' },
+    { id: 'face_pull', group: '어깨', pat: 'sh_rear', badge: '후면·회전근', why: '얼굴 쪽으로 당기며 어깨를 외회전해, 후면 삼각근과 어깨 주변 안정근을 같이 자극해요.' },
+    { id: 'db_shoulder', group: '어깨', pat: 'sh_front', badge: '안정성', why: '앉아서 하면 허리를 덜 쓰고, 덤벨이라 좌우를 고르게 밀 수 있어요.' },
+    { id: 'incline_db_curl', group: '이두', pat: '', badge: '장근 길이', ref: 'wolf23', why: '몸을 뒤로 기대 팔을 몸 뒤로 보내, 이두 장두가 늘어난 위치에서 말아요.' },
+    { id: 'preacher_curl', group: '이두', pat: '', badge: '고립', why: '팔을 패드에 고정해 반동을 줄이고, 이두 짧은 머리에 집중하기 좋아요.' },
+    { id: 'oh_triceps', group: '삼두', pat: '', badge: 'Maeo 2023', ref: 'maeo23', why: '팔을 머리 위로 올려 삼두 장두를 최대로 늘린 상태라, 팔 내린 중립 위치 익스텐션보다 장두 근비대가 약 1.5배 컸어요.' },
+    { id: 'triceps_pushdown', group: '삼두', pat: '', badge: '고립', why: '팔꿈치를 옆구리에 고정한 채 내려, 삼두 외측·내측두를 안정적으로 고립해요. 장두 자극은 오버헤드와 나눠 하면 좋아요.' },
+    { id: 'cable_crunch', group: '코어', pat: '', badge: '과부하', why: '무게를 단계적으로 올릴 수 있어, 맨몸 크런치보다 점진적 과부하가 쉬워요.' },
+    { id: 'hanging_leg_raise', group: '코어', pat: '', badge: '고난도', why: '골반을 말아 올리며 하복부를 깊게 수축해요. 허리보다 복근에 힘이 가게 골반부터 움직이세요.' },
+    { id: 'ab_wheel', group: '코어', pat: '', badge: '항신장', why: '몸을 앞으로 밀 때 복근이 늘어나며 버티는 힘이 커져요. 허리가 꺾이면 무릎을 바닥에 두고 범위를 줄이세요.' }
+  ];
+
   function pickOne(ids, used) {
     const cands = [];
     for (const id of ids) {
@@ -165,30 +194,198 @@
     cands.sort((a, b) => scoreEx(a) - scoreEx(b) || String(a.name).localeCompare(b.name, 'ko'));
     return cands[0] || null;
   }
-  function recLine(ex, sets) {
+  const REF_LBL = { maeo21: 'Maeo et al., 2021', maeo23: 'Maeo et al., 2023', wolf23: 'Wolf et al., 2023', robinson: 'Robinson et al., 2024', vol: 'Schoenfeld et al., 2017' };
+  function recLine(ex, sets, meta) {
     const r = ex.rec || { sets: '3세트', reps: '8~12회', rest: '90초' };
-    return { id: ex.id, name: ex.name, sets: sets || r.sets, reps: r.reps, rest: r.rest, group: ex.group };
+    const m = meta || {};
+    return {
+      id: ex.id, name: ex.name, sets: sets || r.sets, reps: r.reps, rest: r.rest,
+      group: m.group || ex.group, why: m.why || '', badge: m.badge || '', ref: m.ref || '',
+      fresh: !!m.fresh, base: bid(ex)
+    };
   }
-  function pickRecs(need, n, used) {
-    const out = [];
+  function dayDiff(a, b) {
+    if (!a || !b) return 999;
+    const pa = String(a).split('-').map(Number), pb = String(b).split('-').map(Number);
+    return Math.round((Date.UTC(pa[0], pa[1] - 1, pa[2]) - Date.UTC(pb[0], pb[1] - 1, pb[2])) / 86400000);
+  }
+  function historyMap(end, days) {
+    const map = {};
+    const store = dbOf();
+    if (!store || !store.workouts) return map;
+    for (let i = 0; i < days; i++) {
+      const date = addDays(end, -i);
+      const seen = new Set();
+      for (const it of (store.workouts[date] || [])) {
+        const n = setsOf(it);
+        if (!n) continue;
+        const b = bid(exById(it.exId));
+        if (!b) continue;
+        map[b] = map[b] || { sets: 0, sessions: 0, last: null };
+        map[b].sets += n;
+        if (!seen.has(b)) { map[b].sessions += 1; seen.add(b); }
+        if (!map[b].last || date > map[b].last) map[b].last = date;
+      }
+    }
+    return map;
+  }
+  function todayBases(date) {
+    const set = new Set();
+    for (const it of ((dbOf().workouts || {})[date] || [])) {
+      if (setsOf(it) > 0) set.add(bid(exById(it.exId)));
+    }
+    return set;
+  }
+  function metaFor(id) {
+    return HIGH_EFF.find(x => x.id === id) || null;
+  }
+  function pickHighEff(date, opts) {
+    const o = opts || {};
+    const n = o.n || 4;
+    const used = o.used || new Set();
+    const preferGroups = o.preferGroups || [];
+    const preferPats = o.preferPats || [];
+    const hist = historyMap(date, 28);
+    const todayB = todayBases(date);
+    const week = countWeek(date);
+    const gapGroups = GROUPS.filter(g => weekStatus(g, week[g.name].t).k === 'low').map(g => g.name);
+    const groups = preferGroups.length ? preferGroups : (gapGroups.length ? gapGroups : GROUPS.map(g => g.name));
+    const usedBases = new Set([...used].map(id => bid(exById(id))).concat([...todayB]));
+
+    const scoreItem = (item, loose) => {
+      if (usedBases.has(item.id) || used.has(item.id)) return null;
+      const h = hist[item.id];
+      const ago = h && h.last ? dayDiff(date, h.last) : 999;
+      const freq = h ? h.sessions : 0;
+      if (todayB.has(item.id)) return null;
+      if (!loose) {
+        if (ago <= 14) return null;
+        if (freq >= 3) return null;
+      } else {
+        if (ago <= 0) return null;
+        if (freq >= 6 && ago <= 14) return null;
+      }
+      const ex = pickOne([item.id], used);
+      if (!ex) return null;
+      if (usedBases.has(bid(ex))) return null;
+      let s = 0;
+      if (groups.includes(item.group)) s += 80;
+      if (gapGroups.includes(item.group)) s += 40;
+      if (item.pat && preferPats.includes(item.pat)) s += 90;
+      if (!h) s += 55;
+      else if (ago >= 28) s += 45;
+      else if (ago > 14) s += 10;
+      else s -= 70;
+      if (freq >= 3) s -= 40;
+      s -= (typeof scoreEx === 'function' ? scoreEx(ex) : 0);
+      const fresh = !h || ago > 14;
+      return { ex, item, s, fresh, ago };
+    };
+
+    const pickFrom = loose => {
+      const ranked = HIGH_EFF.map(item => scoreItem(item, loose)).filter(Boolean)
+        .sort((a, b) => b.s - a.s || String(a.ex.name).localeCompare(b.ex.name, 'ko'));
+      const out = [];
+      for (const row of ranked) {
+        if (out.length >= n) break;
+        const b = bid(row.ex);
+        if (usedBases.has(b) || used.has(row.ex.id)) continue;
+        used.add(row.ex.id);
+        usedBases.add(b);
+        out.push(recLine(row.ex, '3세트', { group: row.item.group, why: row.item.why, badge: row.item.badge, ref: row.item.ref, fresh: row.fresh }));
+      }
+      return out;
+    };
+
+    let out = pickFrom(false);
+    if (out.length < Math.min(2, n)) {
+      const more = pickFrom(true);
+      for (const r of more) {
+        if (out.some(x => x.base === r.base || x.id === r.id)) continue;
+        out.push(r);
+        if (out.length >= n) break;
+      }
+    }
+    return out.slice(0, n);
+  }
+  function pickRecs(need, n, used, date) {
+    const pat = recByPat[need] ? need : '';
+    const group = recByGroup[need] ? need : (PAT[need] && PAT[need].group) || '';
+    const date0 = date || (typeof todayStr === 'function' ? todayStr() : null);
+    if (date0) {
+      const out = pickHighEff(date0, { n, used, preferGroups: group ? [group] : [], preferPats: pat ? [pat] : [] });
+      if (out.length) return out;
+    }
     const ids = recByPat[need] || recByGroup[need] || [];
+    const out = [];
     for (const id of ids) {
       const ex = pickOne([id], used);
       if (!ex) continue;
       used.add(ex.id);
-      out.push(recLine(ex, '3세트'));
+      const meta = metaFor(id) || {};
+      out.push(recLine(ex, '3세트', { group: meta.group || group, why: meta.why, badge: meta.badge, ref: meta.ref, fresh: true }));
       if (out.length >= n) break;
     }
-    if (out.length < n && recByGroup[need]) {
-      for (const id of recByGroup[need]) {
-        const ex = pickOne([id], used);
-        if (!ex) continue;
-        used.add(ex.id);
-        out.push(recLine(ex, '3세트'));
-        if (out.length >= n) break;
-      }
-    }
     return out;
+  }
+  function diagnose(date) {
+    const week = countWeek(date);
+    const today = countToday(date);
+    const low = GROUPS.filter(g => weekStatus(g, week[g.name].t).k === 'low')
+      .map(g => ({ name: g.name, t: week[g.name].t, lo: g.week[0], hi: g.week[1], st: weekStatus(g, week[g.name].t) }));
+    const tips = patternAdvice(date, today);
+    const miss = tips.map(t => t.msg);
+    const missShort = tips.map(t => `${t.group} · ${(PAT[t.need] || {}).label || t.need}`);
+    let summary;
+    if (low.length && missShort.length) {
+      summary = `이번 주 볼륨이 부족한 부위는 ${low.map(g => `${g.name}(${fmt(g.t)}/${g.lo}–${g.hi}세트)`).join(', ')}예요. 오늘은 ${missShort.join(', ')} 패턴이 빠졌어요.`;
+    } else if (low.length) {
+      summary = `이번 주 볼륨이 부족한 부위는 ${low.map(g => `${g.name}(${fmt(g.t)}/${g.lo}–${g.hi}세트)`).join(', ')}예요. 평소 안 하던 고효율 종목으로 채워 보면 좋아요.`;
+    } else if (missShort.length) {
+      summary = `주간 세트는 비교적 채워졌어요. 다만 오늘은 ${missShort.join(', ')} 패턴이 빠졌어요.`;
+    } else {
+      summary = '이번 주 주요 부위 볼륨은 비교적 고른 편이에요. 그래도 최근에 안 해본 고효율 종목을 하나 넣으면 자극이 새로워져요.';
+    }
+    return { low, miss, missShort, summary, week, today };
+  }
+  function completeSection(date) {
+    const diag = diagnose(date);
+    const preferGroups = diag.low.length ? diag.low.map(g => g.name) : [];
+    const preferPats = [];
+    for (const t of (patternAdvice(date, diag.today) || [])) if (t.need) preferPats.push(t.need);
+    const items = pickHighEff(date, { n: 4, preferGroups, preferPats });
+    const cards = items.map(r => {
+      const rec = `${esc(r.sets)} · ${esc(r.reps)} · 휴식 ${esc(r.rest)}`;
+      const badge = r.fresh
+        ? '<em class="he-badge">새로운 고효율 추천</em>'
+        : (r.badge ? `<em class="he-badge dim">${esc(r.badge)}</em>` : '');
+      const ev = r.ref && REF_LBL[r.ref] ? ` <a class="he-ref" href="#/evidence">${esc(REF_LBL[r.ref])}</a>` : '';
+      return `<div class="he-card" data-ex="${esc(r.id)}">
+        <div class="he-top"><div><b>${esc(r.name)}</b>${badge}<div class="muted small">${esc(r.group)} · ${rec}</div></div></div>
+        <p class="small he-why">${esc(r.why)}${ev}</p>
+        <div class="he-acts">
+          <button type="button" class="btn sm primary he-add" data-ex="${esc(r.id)}">오늘 기록에 담기</button>
+          <button type="button" class="btn sm ghost he-guide" data-ex="${esc(r.id)}">운동법 보기</button>
+        </div>
+      </div>`;
+    }).join('') || '<p class="muted small">오늘은 고를 만한 새 종목이 많지 않아요. 회복을 우선해도 좋아요.</p>';
+    const html = `<div id="heSec">
+      <h4 class="he-h">부족한 부위 · 새로 해볼 만한 고효율 추천 종목</h4>
+      <p>${esc(diag.summary)}</p>
+      ${cards}
+      <p class="muted small" style="margin-top:8px">최근 14일 안에 자주 한 종목은 빼 두고, 근비대 효율·안정성·장근 길이 자극이 좋은 동작을 골랐어요. 통증·찌릿함이 있으면 무리하지 마세요. <a href="#/evidence">근거</a></p>
+    </div>`;
+    return { html, items, diag };
+  }
+  function bindComplete(root, hooks) {
+    const h = hooks || {};
+    const el = root || document;
+    el.querySelectorAll('.he-add[data-ex]').forEach(b => {
+      b.onclick = ev => { ev.preventDefault(); ev.stopPropagation(); if (h.onAdd) h.onAdd(b.dataset.ex); };
+    });
+    el.querySelectorAll('.he-guide[data-ex]').forEach(b => {
+      b.onclick = ev => { ev.preventDefault(); ev.stopPropagation(); if (h.onGuide) h.onGuide(b.dataset.ex); };
+    });
   }
   function patternAdvice(date, today) {
     const done = patternsDone(date);
@@ -231,7 +428,7 @@
     if (recorded && !flags.overload) {
       for (const tip of patternAdvice(date, today)) {
         lines.push(tip.msg);
-        recs.push(...pickRecs(tip.need, 1, used));
+        recs.push(...pickRecs(tip.need, 1, used, date));
       }
     }
 
@@ -246,7 +443,7 @@
       lines.push(top.length
         ? `오늘은 최근 7일 볼륨이 적고 충분히 쉰 ${gnames}을 해보면 좋아요. 부위당 4~10세트, 매 세트 마지막에 1~2회 여유(RIR 1~2)를 남기고 멈추세요.`
         : '오늘은 컨디션 되는 대근육(가슴·등·하체) 하나와 보조 부위를 조합해 4~10세트로 시작해 보세요.');
-      for (const x of top) recs.push(...pickRecs(x.g.name, 2, used));
+      for (const x of top) recs.push(...pickRecs(x.g.name, 2, used, date));
     }
 
     if (!lines.length) {
@@ -282,7 +479,11 @@
       </div>`;
     }).join('');
     const recHtml = a.recs.length
-      ? `<div class="pt-recs">${a.recs.map(r => `<button type="button" class="pt-rec" data-ex="${r.id}"><b>${esc(r.name)}</b><span class="muted small">${esc(r.sets)} · ${esc(r.reps)} · 휴식 ${esc(r.rest)}</span></button>`).join('')}</div>`
+      ? `<div class="pt-recs">${a.recs.map(r => {
+          const badge = r.fresh ? '<em class="he-badge">새로운 고효율 추천</em>' : (r.badge ? `<em class="he-badge dim">${esc(r.badge)}</em>` : '');
+          const why = r.why ? `<span class="small he-why">${esc(r.why)}</span>` : '';
+          return `<button type="button" class="pt-rec" data-ex="${r.id}"><span class="he-top"><b>${esc(r.name)}</b>${badge}</span><span class="muted small">${esc(r.group || '')} · ${esc(r.sets)} · ${esc(r.reps)} · 휴식 ${esc(r.rest)}</span>${why}</button>`;
+        }).join('')}</div>`
       : '';
     const warn = a.flags.overload ? ' pt-over' : (a.flags.finish ? ' pt-ok' : '');
     return `<div class="card pt-card${warn}" id="ptCoach">
@@ -329,7 +530,8 @@
 
   w.PT_COACH = {
     attach,
-    GROUPS, PAT, sessionStatus, weekStatus, countToday, countWeek, todayTotalSets,
-    patternsDone, buildAdvice, cardHtml, intensityHtml, bindCard, pickRecs, recLine
+    GROUPS, PAT, HIGH_EFF, sessionStatus, weekStatus, countToday, countWeek, todayTotalSets,
+    patternsDone, buildAdvice, cardHtml, intensityHtml, bindCard, pickRecs, recLine,
+    pickHighEff, historyMap, diagnose, completeSection, bindComplete
   };
 })(window);

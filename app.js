@@ -674,7 +674,7 @@ function buildReview(date) {
   const used = new Set(rows.map(r => r.ex.id));
   const low = REVIEW_MAIN.map(n => ({ n, t: ((wk[n] && wk[n].d) || 0) + ((wk[n] && wk[n].i) || 0) / 2 }))
     .filter(x => x.t < 10).sort((a, b) => a.t - b.t);
-  const next = [];
+  let next = [];
   for (const g of low) {
     const ex = pickReviewEx(g.n, used);
     if (!ex) continue;
@@ -698,8 +698,20 @@ function buildReview(date) {
   const hello = prs.length ? '오늘 힘차게 잘 해냈어요!' : '오늘도 잘 채우고 마무리했네요!';
   const sum = `${hello} ${esc(nameList)} 포함 <b>${rows.length}가지</b>를 했어요. 총 <b>${sets}세트</b>${vol ? `, 볼륨 <b>${fmt(vol)}kg</b>` : ''}${cardio ? `, 유산소 <b>${fmt(cardio)}분</b>` : ''}${groups.length ? ` · 자극한 부위: ${esc(groups.join(', '))}` : ''}. ${cmpLine}`;
   const perHtml = per.map(x => `<div class="rv-ex" data-ex="${esc(x.id)}"><div class="nm">${esc(x.name)}${x.pr ? '<span class="rv-tag">PR</span>' : ''}${x.dir === 'up' ? '<span class="rv-tag">상승</span>' : x.dir === 'down' ? '<span class="rv-tag down">낮음</span>' : '<span class="rv-tag same">유지</span>'}</div><div class="meta">${esc(x.setsText)}</div><p>${esc(x.cmp)} ${esc(x.tip)}</p></div>`).join('');
+  let he = null;
+  if (window.PT_COACH && window.PT_COACH.completeSection) {
+    he = window.PT_COACH.completeSection(date);
+    if (he && he.items && he.items.length) {
+      next = he.items.map(n => ({
+        group: n.group, id: n.id, name: n.name, why: n.why, badge: n.badge, fresh: n.fresh,
+        week: he.diag && he.diag.week && he.diag.week[n.group] ? r1(he.diag.week[n.group].t) : 0
+      }));
+    }
+  }
   let nextHtml;
-  if (next.length) {
+  if (he && he.html) {
+    nextHtml = he.html;
+  } else if (next.length) {
     nextHtml = next.map(n => `<div class="rv-food"><b>${esc(n.group)}</b> <span class="muted">최근 7일 ${fmt(n.week)}/10세트</span><div style="margin-top:4px">${esc(n.name)} 추천해요.</div></div>`).join('');
     nextHtml = `<p>최근 7일 기준으로 아직 10세트가 안 채워진 부위가 있어요. 머신·케이블·덤벨 위주로 골라 봤어요.</p>${nextHtml}`;
   } else {
@@ -735,6 +747,7 @@ function buildReview(date) {
       date, exercises: rows.length, sets, volume: r1(vol), groups, up, same, down, prs,
       per: per.map(x => ({ id: x.id, name: x.name, pr: x.pr, stall: x.stall, dir: x.dir, tip: x.tip })),
       next,
+      diag: he && he.diag ? { summary: he.diag.summary, low: (he.diag.low || []).map(g => g.name), missShort: he.diag.missShort || [] } : null,
       diet: t ? { kcal: r1(tot.kcal), protein: r1(tot.protein), kcalT: t.kcal, proteinT: t.protein, need: dietNeed, picks: dietPicks.map(p => ({ name: p.name, nick: p.nick, kcal: p.kcal, protein: p.protein, src: p.src })) } : null
     }
   };
@@ -757,7 +770,14 @@ function showReview(rebuild) {
     renderLog();
   }
   const rec = db.reviews[curDate];
-  if (rec && rec.html) openSheet(rec.html);
+  if (rec && rec.html) openSheet(rec.html, body => {
+    if (window.PT_COACH && window.PT_COACH.bindComplete) {
+      window.PT_COACH.bindComplete(body, {
+        onAdd: id => { closeSheet(); addExercise(id); },
+        onGuide: id => { closeSheet(); go('#/ex/' + id + '/guide'); }
+      });
+    }
+  });
 }
 function bindReviewBtns() {
   const d = $('#doneEx'); if (d) d.onclick = () => showReview(true);
@@ -1340,7 +1360,7 @@ function renderSettings() {
       <p class="small" style="margin:0">아이폰: 사파리 하단 <b>공유</b> → <b>홈 화면에 추가</b><br>안드로이드: 크롬 메뉴(⋮) → <b>홈 화면에 추가</b> 또는 <b>앱 설치</b><br><span class="muted">한 번 열고 나면 인터넷 없이도 동작해요.</span></p></div>
     <button class="btn block" id="evBtn" style="margin-bottom:12px">📚 계산·음식 데이터 근거 (논문·출처)</button>
     <button class="btn danger block" id="wipe">전체 기록 삭제</button>
-    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v16 · 상우님 전용 💪</p>`;
+    <p class="muted small" style="text-align:center;margin-top:16px">핏로그 v17 · 상우님 전용 💪</p>`;
   $('#evBtn').onclick = () => go('#/evidence');
   const fname = () => `fitlog-backup-${todayStr()}.json`;
   const markBackup = () => { db.meta.lastBackup = todayStr(); save(); };
@@ -1410,6 +1430,10 @@ const REFS = [
   { k: 'vol', t: 'Schoenfeld BJ, Ogborn D, Krieger JW. Dose-response relationship between weekly resistance training volume and increases in muscle mass: a systematic review and meta-analysis. J Sports Sci. 2017;35(11):1073–1082.', doi: '10.1080/02640414.2016.1210197' },
   { k: 'freq', t: 'Schoenfeld BJ, Ogborn D, Krieger JW. Effects of resistance training frequency on measures of muscle hypertrophy: a systematic review and meta-analysis. Sports Med. 2016;46(11):1689–1697.', doi: '10.1007/s40279-016-0543-8' },
   { k: 'helms', t: 'Helms ER, Aragon AA, Fitschen PJ. Evidence-based recommendations for natural bodybuilding contest preparation: nutrition and supplementation. J Int Soc Sports Nutr. 2014;11:20.', doi: '10.1186/1550-2783-11-20' },
+  { k: 'robinson', t: 'Robinson ZP, Pelland JC, Remmert JF, Refalo MC, Jukic I, Steele J, Zourdos MC. Exploring the dose-response relationship between estimated resistance training proximity to failure, strength gain, and muscle hypertrophy: a series of meta-regressions. Sports Med. 2024;54(9):2209–2231.', doi: '10.1007/s40279-024-02069-2' },
+  { k: 'maeo21', t: 'Maeo S, Huang M, Wu Y, Sakurai H, Kusagawa Y, Sugiyama T, Kanehisa H, Isaka T. Greater hamstrings muscle hypertrophy but similar damage protection after training at long versus short muscle lengths. Med Sci Sports Exerc. 2021;53(4):825–837.', doi: '10.1249/MSS.0000000000002523' },
+  { k: 'maeo23', t: 'Maeo S, Wu Y, Huang M, Sakurai H, Kusagawa Y, Sugiyama T, Kanehisa H, Isaka T. Triceps brachii hypertrophy is substantially greater after elbow extension training performed in the overhead versus neutral arm position. Eur J Sport Sci. 2023;23(7):1240–1250.', doi: '10.1080/17461391.2022.2100279' },
+  { k: 'wolf23', t: 'Wolf M, Androulakis-Korakakis P, Fisher JP, Schoenfeld BJ, Steele J. Partial vs full range of motion resistance training: a systematic review and meta-analysis. Int J Strength Cond. 2023;3(1).', doi: '10.47206/ijsc.v3i1.182' },
 ];
 const DATA_SRCS = [
   ['농촌진흥청 국가표준식품성분표 제10개정판', '공공데이터포털 15137343 (파일 데이터, 3,310개 식품, 100g당). 일부 항목은 성분표가 국립수산과학원·USDA·일본식품성분표 값을 인용한 것이고, 앱에 원출처를 함께 적었어요.', 'https://www.data.go.kr/data/15137343/fileData.do'],
@@ -1451,8 +1475,9 @@ function renderEvidence() {
       <p class="small"><a href="https://strengthlevel.com/strength-standards" target="_blank" rel="noopener">strengthlevel.com/strength-standards</a><br><a href="https://exrx.net/Testing/WeightLifting/StrengthStandards" target="_blank" rel="noopener">exrx.net/Testing/WeightLifting/StrengthStandards</a></p></div>
     <div class="card ev"><h3>🖼️ 자세 그림</h3><p class="small">자세 그림은 앱이 직접 그린 단순화한 그림이에요(인터넷 없이 동작). 관절 각도·움직임 경로는 일반적인 동작 설명을 바탕으로 했고, 사람마다 체형에 따라 바른 자세가 조금씩 달라요. 처음 하는 동작은 트레이너에게 확인받는 걸 추천해요.</p></div>
     <div class="card ev"><h3>📋 추천 루틴은 어떻게 짰나요?</h3>
-      <p class="small"><b>주간 세트</b>: 주당 세트 수와 근육 증가의 관계를 본 메타분석에서, 세트가 많을수록 근육이 더 늘어나는 용량-반응 관계가 나타났고 근육마다 <b>주 10세트 이상</b>이 그보다 적은 경우보다 효과가 컸어요${ref('vol')}. 루틴 화면은 부위마다 <b>주 10~20세트</b>를 참고 범위로 보여 줘요. PT 코치는 대근육(가슴·등·하체) <b>주 10~18세트</b>, 소근육(어깨·팔·코어) <b>주 8~14세트</b>, 한 세션 부위당 <b>4~10세트</b>로 조금 더 타이트하게 안내해요 — 18·14·10 위쪽은 이 연구의 값이 아니라 회복을 고려한 일반적인 코칭 상한이에요.</p>
-      <p class="small"><b>강도(RIR 1~2)</b>: 실패 직전 1~2회를 남기는 강도(RPE 8~9)는 관절 부담을 줄이면서도 근성장 자극을 유지하는 일반적인 코칭 방법이에요. 더블 프로그레션(횟수 상단을 채운 뒤에만 무게를 올림)도 같은 맥락의 진행 방법이에요. 통증·찌릿함은 즉시 중단하고 전문가와 상담하세요. 의학적 진단이 아니에요.</p>
+      <p class="small"><b>주간 세트</b>: Schoenfeld, Ogborn, Krieger (2017) 메타분석에서, 세트가 많을수록 근육이 더 늘어나는 용량-반응 관계가 나타났고 근육마다 <b>주 10세트 이상</b>이 5세트 미만·5~9세트보다 근비대 효과가 유의하게 컸어요${ref('vol')}. 루틴 화면은 부위마다 <b>주 10~20세트</b>를 참고 범위로 보여 줘요. PT 코치는 대근육(가슴·등·하체) <b>주 10~18세트</b>, 소근육(어깨·팔·코어) <b>주 8~14세트</b>, 한 세션 부위당 <b>4~10세트</b>로 조금 더 타이트하게 안내해요. 이 상한(18·14·10)은 위 연구가 정한 값이 아니라, 용량-반응 경향과 회복 한계를 반영한 실전 코칭 범위예요.</p>
+      <p class="small"><b>강도(RIR 1~2)</b>: Robinson 등 (2024) 메타회귀에서는 실패 지점(RIR 0)에 가까울수록 근비대가 조금 더 커지는 경향이 있었어요. 다만 분석이 탐색적이고 RIR을 사후에 추정해서, 정확한 용량-반응은 저자들도 아직 분명하지 않다고 밝혔어요${ref('robinson')}. 앱이 권하는 <b>RIR 1~2(RPE 8~9)</b>는 “실패와 똑같이 좋다”는 연구 결과가 아니라, 실패에 가까운 높은 자극을 유지하면서 피로·관절 부담을 줄이려는 실전 코칭 타협이에요. 더블 프로그레션(횟수 상단을 채운 뒤에만 무게를 올림)도 같은 맥락이에요. 통증·찌릿함은 즉시 중단하고 전문가와 상담하세요. 의학적 진단이 아니에요.</p>
+      <p class="small"><b>신장성·장근 길이 자극</b>: 근육이 길게 늘어난 위치에서 힘을 내는 훈련이 근비대에 유리할 수 있다는 연구가 있어요. Maeo 등 (2021)은 시티드 레그컬이 라잉 레그컬보다 햄스트링 근비대가 유의하게 컸다고 보고했어요(전체 햄스트링 부피 +14% vs +9%)${ref('maeo21')}. Maeo 등 (2023)은 오버헤드 트라이셉스 익스텐션이 팔 내린 중립 위치보다 삼두 장두 근비대가 약 1.5배 컸다고 보고했어요${ref('maeo23')}. Wolf 등 (2023)은 <b>International Journal of Strength and Conditioning</b>(스포츠메디슨이 아님) 메타분석에서, 전체적으로는 전체 가동범위가 약간 유리했고, 하위분석에서는 장근 길이에서 수행하는 부분 가동범위가 근비대에 유리할 수 있다고 봤어요. 하위분석 표본이 적어 잠정적 결과예요${ref('wolf23')}. 운동 완료 추천은 이 원리와 해당 논문이 직접 비교한 종목(시티드 레그컬, 오버헤드 익스텐션)을 우선해요.</p>
       <p class="small"><b>빈도</b>: 같은 양을 기준으로 부위마다 <b>주 2번 이상</b> 훈련하는 쪽이 주 1번보다 근비대에 유리했어요${ref('freq')}. 그래서 3·4·5회 루틴 모두 큰 부위를 주 2번씩 넣었어요.</p>
       <p class="small"><b>세트 세는 법</b>: 그 부위가 주동근이면 1세트, 보조근이면 0.5세트로 세요. 0.5는 널리 쓰이는 어림 규칙이고 정확한 값은 아니에요. 반복 범위·휴식은 위의 더블 프로그레션 규칙과 같아요(다관절 머신 1분 30초~2분, 고립 1~1분 30초).</p></div>
     <div class="card ev"><h3>🏷️ 짐80·파나타 기구 목록 출처</h3>
